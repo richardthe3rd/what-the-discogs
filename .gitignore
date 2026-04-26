@@ -1,3 +1,4 @@
 wtd
+!plugins/what-the-discogs/bin/wtd
 .env
 dist/

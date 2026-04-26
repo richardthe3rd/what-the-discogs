@@ -1,0 +1,9 @@
+{
+  "name": "what-the-discogs",
+  "description": "Identify the exact Discogs pressing of a vinyl record via guided Q&A",
+  "author": {
+    "name": "richardthe3rd"
+  },
+  "homepage": "https://github.com/richardthe3rd/what-the-discogs",
+  "repository": "https://github.com/richardthe3rd/what-the-discogs"
+}

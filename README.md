@@ -61,39 +61,49 @@ Claude searches Discogs, asks only the questions needed to narrow it down, and r
 
 Requires [mise](https://mise.jdx.dev) and a [Discogs token](https://www.discogs.com/settings/developers).
 
-**Install once, use everywhere:**
+### Install via the plugin system
+
+Run these two commands inside Claude Code (no terminal, no git clone needed):
+
+```
+/plugin marketplace add richardthe3rd/what-the-discogs
+/plugin install what-the-discogs@what-the-discogs
+```
+
+Add your Discogs token to `~/.claude/settings.json` so it's available in every Claude Code session:
+
+```json
+{
+  "env": {
+    "DISCOGS_TOKEN": "your_token_here"
+  }
+}
+```
+
+Run `/reload-plugins`, then use it in any Claude Code session:
+
+```
+/what-the-discogs:identify-vinyl
+/what-the-discogs:identify-vinyl /path/to/photo.jpg
+```
+
+The plugin's `bin/wtd` is a [mise tool stub](https://mise.jdx.dev/dev-tools/tool-stubs.html) — it downloads and caches the `wtd` binary on first use. No separate binary installation needed.
+
+### Alternative: standalone install (git clone)
 
 ```bash
 git clone https://github.com/richardthe3rd/what-the-discogs
 cd what-the-discogs
 
 cp .env.example .env   # add DISCOGS_TOKEN
-mise run setup         # installs wtd globally + skill globally
+mise run setup         # installs wtd globally + /identify-vinyl skill
 ```
 
-`mise run setup` does three things:
-1. `mise use -g github:richardthe3rd/what-the-discogs@latest` — installs `wtd` to your global mise shims (available in every terminal session)
-2. Copies the skill to `~/.claude/skills/identify-vinyl/` — available in every Claude Code session
-3. Prints the Desktop config snippet
-
-After setup, open any project in Claude Code and run:
+After setup:
 
 ```
 /identify-vinyl
 /identify-vinyl /path/to/photo.jpg
-```
-
-### Install steps separately
-
-```bash
-# Just the binary (globally available as `wtd`)
-mise use -g github:richardthe3rd/what-the-discogs@latest
-
-# Just the Claude Code skill (globally available as /identify-vinyl)
-mise run install-skill
-
-# Just the Desktop config snippet
-mise run setup-desktop
 ```
 
 ---

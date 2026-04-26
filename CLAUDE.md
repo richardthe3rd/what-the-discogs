@@ -14,6 +14,13 @@ mise run build          # builds ./wtd binary
 
 ## Invoke the skill
 
+Via plugin (installed from marketplace):
+```
+/what-the-discogs:identify-vinyl
+/what-the-discogs:identify-vinyl /path/to/photo.jpg
+```
+
+Via standalone install (`mise run setup`):
 ```
 /identify-vinyl
 /identify-vinyl /path/to/photo.jpg

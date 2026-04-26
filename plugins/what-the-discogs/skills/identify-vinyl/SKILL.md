@@ -12,14 +12,10 @@ Binary status: !`which wtd 2>/dev/null && echo "found: $(which wtd)" || echo "no
 
 ## Phase 0: Setup
 
-**Ensure `wtd` is available.** The plugin provides `wtd` via a `mise x` wrapper, so [mise](https://mise.jdx.dev) must be installed. Check the binary status line above, then:
+**Ensure `wtd` is available.** The plugin provides `wtd` via a mise tool stub, so [mise](https://mise.jdx.dev) must be installed and on PATH. Check the binary status line above, then:
 
 1. **Found** — nothing to do.
-2. **Not found** — mise may not be installed. Install it:
-   ```bash
-   curl https://mise.jdx.dev/install.sh | sh
-   ```
-   Then run `/reload-plugins` and retry.
+2. **Not found** — mise may not be installed or may not be on PATH. Ask the user to install mise by visiting https://mise.jdx.dev and following the instructions for their platform (this skill cannot run the installer). After installing, they should open a new terminal, then run `/reload-plugins` and retry.
 
 **Verify DISCOGS_TOKEN is set:**
 ```bash

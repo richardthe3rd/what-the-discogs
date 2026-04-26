@@ -23,11 +23,15 @@ echo ${DISCOGS_TOKEN:+set}
 ```
 If empty, tell the user to set `DISCOGS_TOKEN` and stop. Direct them to:
 1. Get a token at https://www.discogs.com/settings/developers
-2. Set it permanently in their shell profile (`~/.zshrc`, `~/.bashrc`, or `~/.profile`):
+2. Add it to `~/.claude/settings.json` so it's available in every Claude Code session:
+   ```json
+   {
+     "env": {
+       "DISCOGS_TOKEN": "your_token_here"
+     }
+   }
    ```
-   export DISCOGS_TOKEN=your_token_here
-   ```
-3. Or for just this session: `export DISCOGS_TOKEN=your_token_here`
+   Then run `/reload-plugins` to pick it up.
 
 ## Phase 1: Initial details
 

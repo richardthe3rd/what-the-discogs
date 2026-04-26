@@ -1,0 +1,49 @@
+[tools]
+go = "1.23"
+goreleaser = "latest"
+
+[env]
+_.file = ".env"
+
+[tasks.build]
+run = "go build -o wtd ."
+description = "Build the wtd binary"
+
+[tasks.install]
+run = "go install ."
+description = "Install wtd to GOPATH/bin"
+
+[tasks.clean]
+run = "rm -f wtd"
+description = "Remove local wtd binary"
+
+[tasks.vet]
+run = "go vet ./..."
+description = "Run go vet"
+
+[tasks.test]
+run = "go test ./..."
+description = "Run tests"
+
+[tasks.release-snapshot]
+run = "goreleaser release --snapshot --clean"
+description = "Build snapshot release locally (no publish)"
+
+# Stub mode: use scripts/wtd-stub in place of the compiled binary.
+# Useful for developing and testing the skill before Phase 2 is complete.
+[tasks.use-stub]
+run = """
+cp scripts/wtd-stub wtd
+chmod +x wtd
+echo "wtd is now the stub (scripts/wtd-stub). Run 'mise run use-real' to switch back."
+"""
+description = "Replace ./wtd with the shell stub for skill development"
+
+[tasks.use-real]
+run = """
+rm -f wtd
+mise run build
+echo "wtd is now the compiled binary."
+"""
+description = "Build and use the real compiled wtd binary"
+depends = ["clean"]

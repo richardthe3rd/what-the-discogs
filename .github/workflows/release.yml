@@ -26,7 +26,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build MCPB bundle
-        run: sh scripts/build-mcpb.sh "${GITHUB_REF_NAME#v}"
+        run: bash scripts/build-mcpb.sh "${GITHUB_REF_NAME#v}"
 
       - name: Upload MCPB bundle to release
         run: gh release upload --clobber "$GITHUB_REF_NAME" what-the-discogs.mcpb

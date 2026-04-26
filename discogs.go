@@ -1,0 +1,486 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+const (
+	baseURL   = "https://api.discogs.com"
+	userAgent = "WhatTheDiscogs/1.0 +https://github.com/richardthe3rd/what-the-discogs"
+)
+
+type Client struct {
+	token   string
+	http    *http.Client
+	cache   map[string][]byte
+	mu      sync.Mutex
+	lastReq time.Time
+}
+
+func NewClient(token string) *Client {
+	return &Client{
+		token:  token,
+		http:   &http.Client{Timeout: 30 * time.Second},
+		cache:  make(map[string][]byte),
+	}
+}
+
+func (c *Client) get(path string, params url.Values) ([]byte, error) {
+	u := baseURL + path
+	if len(params) > 0 {
+		u += "?" + params.Encode()
+	}
+
+	c.mu.Lock()
+	if cached, ok := c.cache[u]; ok {
+		c.mu.Unlock()
+		return cached, nil
+	}
+
+	// Enforce 1 req/sec rate limit.
+	since := time.Since(c.lastReq)
+	if since < time.Second {
+		time.Sleep(time.Second - since)
+	}
+	c.lastReq = time.Now()
+	c.mu.Unlock()
+
+	var body []byte
+	var err error
+	backoff := 2 * time.Second
+	for attempt := 0; attempt <= 3; attempt++ {
+		body, err = c.doGet(u)
+		if err == nil {
+			break
+		}
+		if !isRateLimit(err) || attempt == 3 {
+			return nil, err
+		}
+		time.Sleep(backoff)
+		backoff *= 2
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	c.mu.Lock()
+	c.cache[u] = body
+	c.mu.Unlock()
+	return body, nil
+}
+
+func (c *Client) doGet(u string) ([]byte, error) {
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Discogs token="+c.token)
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode == 429 {
+		return nil, &rateLimitError{}
+	}
+	if resp.StatusCode >= 400 {
+		msg := extractMessage(body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, msg)
+	}
+	return body, nil
+}
+
+type rateLimitError struct{}
+
+func (e *rateLimitError) Error() string { return "rate limited (429)" }
+
+func isRateLimit(err error) bool {
+	_, ok := err.(*rateLimitError)
+	return ok
+}
+
+func extractMessage(body []byte) string {
+	var m struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &m) == nil && m.Message != "" {
+		return m.Message
+	}
+	return string(body)
+}
+
+// SearchMasters searches for master releases matching artist and title.
+func (c *Client) SearchMasters(artist, title string) ([]MasterResult, error) {
+	params := url.Values{
+		"artist": {artist},
+		"q":      {title},
+		"type":   {"master"},
+	}
+	body, err := c.get("/database/search", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Results []struct {
+			ID    int    `json:"id"`
+			Title string `json:"title"`
+			Year  string `json:"year"`
+			Stats struct {
+				Community struct {
+					InWantlist   int `json:"in_wantlist"`
+					InCollection int `json:"in_collection"`
+				} `json:"community"`
+			} `json:"stats"`
+			MasterURL string `json:"master_url"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parsing search results: %w", err)
+	}
+
+	// Fetch versions_count for each master separately since search doesn't include it.
+	// Limit to first 10 results to keep API calls reasonable.
+	results := make([]MasterResult, 0, len(resp.Results))
+	limit := len(resp.Results)
+	if limit > 10 {
+		limit = 10
+	}
+	for _, r := range resp.Results[:limit] {
+		year, _ := strconv.Atoi(r.Year)
+		mr := MasterResult{
+			ID:    r.ID,
+			Title: r.Title,
+			Year:  year,
+			URL:   fmt.Sprintf("https://www.discogs.com/master/%d", r.ID),
+		}
+
+		// Fetch versions_count from master endpoint.
+		master, err := c.GetMaster(r.ID)
+		if err == nil {
+			mr.VersionsCount = master.VersionsCount
+		}
+		results = append(results, mr)
+	}
+	return results, nil
+}
+
+type masterResponse struct {
+	ID            int    `json:"id"`
+	Title         string `json:"title"`
+	Year          int    `json:"year"`
+	VersionsCount int    `json:"versions_count"`
+	URI           string `json:"uri"`
+}
+
+func (c *Client) GetMaster(masterID int) (*masterResponse, error) {
+	body, err := c.get(fmt.Sprintf("/masters/%d", masterID), nil)
+	if err != nil {
+		return nil, err
+	}
+	var m masterResponse
+	if err := json.Unmarshal(body, &m); err != nil {
+		return nil, fmt.Errorf("parsing master: %w", err)
+	}
+	return &m, nil
+}
+
+// SearchReleases searches for releases (fallback when no master exists).
+func (c *Client) SearchReleases(artist, title string) ([]Version, error) {
+	params := url.Values{
+		"artist": {artist},
+		"q":      {title},
+		"type":   {"release"},
+	}
+	body, err := c.get("/database/search", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Results []struct {
+			ID      int      `json:"id"`
+			Title   string   `json:"title"`
+			Label   []string `json:"label"`
+			Country string   `json:"country"`
+			Year    string   `json:"year"`
+			CatNo   string   `json:"catno"`
+			Format  []string `json:"format"`
+			Thumb   string   `json:"thumb"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parsing search results: %w", err)
+	}
+
+	versions := make([]Version, 0, len(resp.Results))
+	for _, r := range resp.Results {
+		label := ""
+		if len(r.Label) > 0 {
+			label = r.Label[0]
+		}
+		format, descs := splitFormat(r.Format)
+		versions = append(versions, Version{
+			ID:          r.ID,
+			Title:       r.Title,
+			Label:       label,
+			Country:     r.Country,
+			Year:        r.Year,
+			CatNo:       r.CatNo,
+			Format:      format,
+			FormatDescs: descs,
+			Thumb:       r.Thumb,
+			ResourceURL: fmt.Sprintf("https://api.discogs.com/releases/%d", r.ID),
+		})
+	}
+	return versions, nil
+}
+
+// GetVersions returns all versions of a master release, paginated.
+func (c *Client) GetVersions(masterID int) ([]Version, error) {
+	var all []Version
+	page := 1
+
+	for {
+		params := url.Values{
+			"page":     {strconv.Itoa(page)},
+			"per_page": {"500"},
+		}
+		body, err := c.get(fmt.Sprintf("/masters/%d/versions", masterID), params)
+		if err != nil {
+			return nil, err
+		}
+
+		var resp struct {
+			Versions []struct {
+				ID     int    `json:"id"`
+				Title  string `json:"title"`
+				Label  string `json:"label"`
+				Country string `json:"country"`
+				Released string `json:"released"`
+				CatNo  string `json:"catno"`
+				Format string `json:"format"`
+				MajorFormats []string `json:"major_formats"`
+				Thumb  string `json:"thumb"`
+				ResourceURL string `json:"resource_url"`
+			} `json:"versions"`
+			Pagination Pagination `json:"pagination"`
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("parsing versions page %d: %w", page, err)
+		}
+
+		for _, v := range resp.Versions {
+			all = append(all, Version{
+				ID:          v.ID,
+				Title:       v.Title,
+				Label:       v.Label,
+				Country:     v.Country,
+				Year:        v.Released,
+				CatNo:       v.CatNo,
+				Format:      primaryFormat(v.MajorFormats, v.Format),
+				FormatDescs: parseFormatDescs(v.Format, v.MajorFormats),
+				Thumb:       v.Thumb,
+				ResourceURL: v.ResourceURL,
+			})
+		}
+
+		if page >= resp.Pagination.Pages {
+			break
+		}
+		page++
+	}
+	return all, nil
+}
+
+// GetRelease returns full release detail for a single release.
+func (c *Client) GetRelease(releaseID int) (*ReleaseDetail, error) {
+	body, err := c.get(fmt.Sprintf("/releases/%d", releaseID), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw struct {
+		ID      int    `json:"id"`
+		Title   string `json:"title"`
+		Year    int    `json:"year"`
+		Country string `json:"country"`
+		Labels  []struct {
+			Name  string `json:"name"`
+			CatNo string `json:"catno"`
+			ID    int    `json:"id"`
+		} `json:"labels"`
+		Formats []struct {
+			Name         string   `json:"name"`
+			Qty          string   `json:"qty"`
+			Descriptions []string `json:"descriptions"`
+			Text         string   `json:"text"`
+		} `json:"formats"`
+		Identifiers []Identifier `json:"identifiers"`
+		Companies   []struct {
+			Name           string `json:"name"`
+			EntityTypeName string `json:"entity_type_name"`
+		} `json:"companies"`
+		Notes string `json:"notes"`
+		URI   string `json:"uri"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("parsing release: %w", err)
+	}
+
+	labels := make([]Label, len(raw.Labels))
+	for i, l := range raw.Labels {
+		labels[i] = Label{Name: l.Name, CatNo: l.CatNo, EntityID: l.ID}
+	}
+	formats := make([]Format, len(raw.Formats))
+	for i, f := range raw.Formats {
+		formats[i] = Format{Name: f.Name, Qty: f.Qty, Descriptions: f.Descriptions, Text: f.Text}
+	}
+	companies := make([]Company, len(raw.Companies))
+	for i, co := range raw.Companies {
+		companies[i] = Company{Name: co.Name, EntityTypeName: co.EntityTypeName}
+	}
+
+	return &ReleaseDetail{
+		ID:          raw.ID,
+		Title:       raw.Title,
+		Year:        raw.Year,
+		Country:     raw.Country,
+		Labels:      labels,
+		Formats:     formats,
+		Identifiers: raw.Identifiers,
+		Companies:   companies,
+		Notes:       raw.Notes,
+		URL:         raw.URI,
+	}, nil
+}
+
+// GetIdentity returns the authenticated user's identity.
+func (c *Client) GetIdentity() (*Identity, error) {
+	body, err := c.get("/oauth/identity", nil)
+	if err != nil {
+		return nil, err
+	}
+	var id Identity
+	if err := json.Unmarshal(body, &id); err != nil {
+		return nil, fmt.Errorf("parsing identity: %w", err)
+	}
+	return &id, nil
+}
+
+// GetFolders returns the user's collection folders.
+func (c *Client) GetFolders(username string) ([]Folder, error) {
+	body, err := c.get(fmt.Sprintf("/users/%s/collection/folders", username), nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Folders []Folder `json:"folders"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parsing folders: %w", err)
+	}
+	return resp.Folders, nil
+}
+
+// AddToCollection adds a release to the user's collection.
+func (c *Client) AddToCollection(username string, folderID, releaseID int) (*CollectionInstance, error) {
+	u := fmt.Sprintf("%s/users/%s/collection/folders/%d/releases/%d",
+		baseURL, username, folderID, releaseID)
+
+	c.mu.Lock()
+	since := time.Since(c.lastReq)
+	if since < time.Second {
+		time.Sleep(time.Second - since)
+	}
+	c.lastReq = time.Now()
+	c.mu.Unlock()
+
+	req, err := http.NewRequest("POST", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Discogs token="+c.token)
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, extractMessage(body))
+	}
+
+	var instance CollectionInstance
+	if err := json.Unmarshal(body, &instance); err != nil {
+		return nil, fmt.Errorf("parsing response: %w", err)
+	}
+	return &instance, nil
+}
+
+// primaryFormat extracts the main format name (e.g. "Vinyl", "CD").
+func primaryFormat(majorFormats []string, formatStr string) string {
+	if len(majorFormats) > 0 {
+		return majorFormats[0]
+	}
+	// Fall back: take first token before comma.
+	if i := strings.Index(formatStr, ","); i >= 0 {
+		return strings.TrimSpace(formatStr[:i])
+	}
+	return formatStr
+}
+
+// parseFormatDescs extracts descriptors like "LP", "Stereo", "Reissue".
+// The versions API packs everything into a single format string like:
+//   "Vinyl, LP, Album, Stereo"
+// major_formats contains the top-level type; remaining tokens are descriptions.
+func parseFormatDescs(formatStr string, majorFormats []string) []string {
+	parts := strings.Split(formatStr, ",")
+	var descs []string
+	skip := make(map[string]bool)
+	for _, mf := range majorFormats {
+		skip[strings.TrimSpace(mf)] = true
+	}
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" && !skip[p] {
+			descs = append(descs, p)
+		}
+	}
+	return descs
+}
+
+// splitFormat is used for search results where format is a []string slice.
+func splitFormat(formats []string) (primary string, descs []string) {
+	if len(formats) == 0 {
+		return "", nil
+	}
+	primary = formats[0]
+	if len(formats) > 1 {
+		descs = formats[1:]
+	}
+	return
+}

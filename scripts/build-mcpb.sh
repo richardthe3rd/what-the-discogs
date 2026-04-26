@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # build-mcpb.sh: Assemble and pack the what-the-discogs MCP Bundle.
 #
-# Usage: sh scripts/build-mcpb.sh <version>
+# Usage: bash scripts/build-mcpb.sh <version>
 #   version  Semver string without leading 'v', e.g. "1.2.3"
 #
 # Expects goreleaser to have already built binaries into dist/.

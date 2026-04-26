@@ -40,7 +40,7 @@
   "tools": [
     {
       "name": "search_masters",
-      "description": "Search Discogs for master releases matching an artist and album name. Returns a list of masters with version counts. Use this first when identifying a record."
+      "description": "Search Discogs for master releases matching an artist and album name. Returns a list of masters (id, title, year, url). Use this first when identifying a record."
     },
     {
       "name": "search_releases",

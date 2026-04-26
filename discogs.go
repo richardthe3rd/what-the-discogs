@@ -285,7 +285,8 @@ func (c *Client) GetVersions(ctx context.Context, masterID int) ([]Version, erro
 		}
 		if page >= resp.Pagination.Pages || len(all) >= 1500 {
 			if len(all) >= 1500 {
-				fmt.Fprintf(os.Stderr, "warning: version list truncated at %d; master %d has %d total\n", len(all), masterID, resp.Pagination.Items)
+				all = all[:1500]
+				fmt.Fprintf(os.Stderr, "warning: version list truncated at 1500; master %d has %d total\n", masterID, resp.Pagination.Items)
 			}
 			break
 		}
@@ -485,7 +486,7 @@ func (c *Client) SetInstanceNote(ctx context.Context, username string, folderID,
 		}
 	}
 	if fieldID == 0 {
-		return fmt.Errorf("Notes field not found in collection fields")
+		return fmt.Errorf("notes field not found in collection fields")
 	}
 
 	u := fmt.Sprintf("%s/users/%s/collection/folders/%d/releases/%d/instances/%d/fields/%d",
@@ -549,6 +550,11 @@ func (c *Client) SetInstanceNote(ctx context.Context, username string, folderID,
 func (c *Client) FetchImageBase64(ctx context.Context, imageURL string) (string, string, error) {
 	if err := c.limiter.Wait(ctx); err != nil {
 		return "", "", err
+	}
+
+	parsed, err := url.Parse(imageURL)
+	if err != nil || !strings.HasSuffix(parsed.Hostname(), ".discogs.com") {
+		return "", "", fmt.Errorf("refusing to fetch image from non-Discogs host: %s", imageURL)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", imageURL, nil)

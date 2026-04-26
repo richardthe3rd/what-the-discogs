@@ -32,7 +32,7 @@ func runMCP(c *Client) error {
 
 func toolSearchMasters() mcp.Tool {
 	return mcp.NewTool("search_masters",
-		mcp.WithDescription("Search Discogs for master releases matching an artist and album name. Returns a list of masters with version counts. Use this first when identifying a record."),
+		mcp.WithDescription("Search Discogs for master releases matching an artist and album name. Returns a list of masters (id, title, year, url). Use this first when identifying a record."),
 		mcp.WithString("artist", mcp.Required(), mcp.Description("Artist or band name")),
 		mcp.WithString("album", mcp.Required(), mcp.Description("Album or release title")),
 	)

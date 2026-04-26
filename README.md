@@ -12,14 +12,9 @@ Requires a [Discogs token](https://www.discogs.com/settings/developers). Choose 
 
 ### Option A — MCP Bundle (no mise required)
 
-Download and install the pre-built bundle with one command. No mise or Go needed.
-
-```bash
-npx @anthropic-ai/mcpb install \
-  https://github.com/richardthe3rd/what-the-discogs/releases/latest/download/what-the-discogs.mcpb
-```
-
-The installer configures Claude Desktop automatically and prompts for your Discogs token. Restart Claude Desktop when prompted.
+1. [Download `what-the-discogs.mcpb`](https://github.com/richardthe3rd/what-the-discogs/releases/latest/download/what-the-discogs.mcpb) from the latest release.
+2. Double-click the downloaded file — the installer opens, prompts for your Discogs token, and configures Claude Desktop automatically.
+3. Restart Claude Desktop.
 
 ### Option B — mise
 

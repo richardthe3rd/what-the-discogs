@@ -1,0 +1,234 @@
+#!/usr/bin/env bash
+# wtd-stub: mock wtd binary for skill development and testing.
+# Returns realistic sample JSON without hitting the Discogs API.
+# Usage: identical to the real wtd binary.
+#
+# Register in mise.toml and symlink or alias as `wtd` during dev:
+#   mise run use-stub   → puts scripts/ on PATH ahead of real wtd
+#   mise run use-real   → restores real wtd
+
+set -euo pipefail
+
+subcommand="${1:-}"
+shift || true
+
+case "$subcommand" in
+
+search-master)
+  # Flags: --artist STR --album STR
+  cat <<'JSON'
+[
+  {
+    "id": 24047,
+    "title": "Abbey Road",
+    "year": 1969,
+    "versions_count": 412,
+    "url": "https://www.discogs.com/master/24047"
+  }
+]
+JSON
+  ;;
+
+search-release)
+  # Flags: --artist STR --album STR
+  cat <<'JSON'
+[
+  {
+    "id": 290897,
+    "title": "Abbey Road",
+    "label": "Apple Records",
+    "country": "UK",
+    "released": "1969",
+    "catno": "PCS 7088",
+    "format": "Vinyl",
+    "format_descriptions": ["LP", "Album", "Stereo"],
+    "thumb": "",
+    "resource_url": "https://api.discogs.com/releases/290897"
+  }
+]
+JSON
+  ;;
+
+versions)
+  # Flags: --master INT
+  cat <<'JSON'
+[
+  {
+    "id": 290897,
+    "title": "Abbey Road",
+    "label": "Apple Records",
+    "country": "UK",
+    "released": "1969",
+    "catno": "PCS 7088",
+    "format": "Vinyl",
+    "format_descriptions": ["LP", "Album", "Stereo"],
+    "thumb": "",
+    "resource_url": "https://api.discogs.com/releases/290897"
+  },
+  {
+    "id": 4490833,
+    "title": "Abbey Road",
+    "label": "Apple Records",
+    "country": "UK",
+    "released": "1969",
+    "catno": "PCS 7088",
+    "format": "Vinyl",
+    "format_descriptions": ["LP", "Album", "Stereo"],
+    "thumb": "",
+    "resource_url": "https://api.discogs.com/releases/4490833"
+  },
+  {
+    "id": 368824,
+    "title": "Abbey Road",
+    "label": "Apple Records",
+    "country": "US",
+    "released": "1969",
+    "catno": "SO-383",
+    "format": "Vinyl",
+    "format_descriptions": ["LP", "Album", "Stereo"],
+    "thumb": "",
+    "resource_url": "https://api.discogs.com/releases/368824"
+  },
+  {
+    "id": 1234567,
+    "title": "Abbey Road",
+    "label": "Apple Records",
+    "country": "Germany",
+    "released": "1970",
+    "catno": "1C 062-04 243",
+    "format": "Vinyl",
+    "format_descriptions": ["LP", "Album", "Stereo"],
+    "thumb": "",
+    "resource_url": "https://api.discogs.com/releases/1234567"
+  },
+  {
+    "id": 2345678,
+    "title": "Abbey Road",
+    "label": "Apple Records",
+    "country": "Japan",
+    "released": "1969",
+    "catno": "AP-8815",
+    "format": "Vinyl",
+    "format_descriptions": ["LP", "Album", "Stereo"],
+    "thumb": "",
+    "resource_url": "https://api.discogs.com/releases/2345678"
+  }
+]
+JSON
+  ;;
+
+release)
+  # Flags: --id INT
+  id_flag=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --id) id_flag="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  case "$id_flag" in
+    290897)
+      cat <<'JSON'
+{
+  "id": 290897,
+  "title": "Abbey Road",
+  "year": 1969,
+  "country": "UK",
+  "labels": [{"name": "Apple Records", "catno": "PCS 7088", "id": 109}],
+  "formats": [{"name": "Vinyl", "qty": "1", "descriptions": ["LP", "Album", "Stereo"], "text": ""}],
+  "identifiers": [
+    {"type": "Matrix / Runout", "value": "YEX 749-1 △ PECKO DUCK", "description": "Side A"},
+    {"type": "Matrix / Runout", "value": "YEX 750-1 △ PECKO DUCK", "description": "Side B"},
+    {"type": "Label Code", "value": "LC 0299", "description": ""}
+  ],
+  "companies": [
+    {"name": "EMI", "entity_type_name": "Manufactured By"}
+  ],
+  "notes": "First UK pressing.",
+  "uri": "https://www.discogs.com/release/290897"
+}
+JSON
+      ;;
+    4490833)
+      cat <<'JSON'
+{
+  "id": 4490833,
+  "title": "Abbey Road",
+  "year": 1969,
+  "country": "UK",
+  "labels": [{"name": "Apple Records", "catno": "PCS 7088", "id": 109}],
+  "formats": [{"name": "Vinyl", "qty": "1", "descriptions": ["LP", "Album", "Stereo"], "text": ""}],
+  "identifiers": [
+    {"type": "Matrix / Runout", "value": "YEX 749-2", "description": "Side A"},
+    {"type": "Matrix / Runout", "value": "YEX 750-2", "description": "Side B"}
+  ],
+  "companies": [
+    {"name": "EMI", "entity_type_name": "Manufactured By"}
+  ],
+  "notes": "Second UK pressing.",
+  "uri": "https://www.discogs.com/release/4490833"
+}
+JSON
+      ;;
+    *)
+      cat <<JSON
+{
+  "id": $id_flag,
+  "title": "Abbey Road",
+  "year": 1969,
+  "country": "Unknown",
+  "labels": [],
+  "formats": [],
+  "identifiers": [],
+  "companies": [],
+  "notes": "",
+  "uri": "https://www.discogs.com/release/$id_flag"
+}
+JSON
+      ;;
+  esac
+  ;;
+
+identity)
+  cat <<'JSON'
+{
+  "id": 1,
+  "username": "your_discogs_username",
+  "resource_url": "https://api.discogs.com/users/your_discogs_username",
+  "consumer_name": "WhatTheDiscogs"
+}
+JSON
+  ;;
+
+list-folders)
+  cat <<'JSON'
+[
+  {"id": 0, "name": "All", "count": 42, "resource_url": ""},
+  {"id": 1, "name": "Uncategorized", "count": 38, "resource_url": ""},
+  {"id": 2, "name": "Favourites", "count": 4, "resource_url": ""}
+]
+JSON
+  ;;
+
+add-to-collection)
+  cat <<'JSON'
+{
+  "instance_id": 999,
+  "folder_id": 1,
+  "id": 290897,
+  "resource_url": "https://api.discogs.com/users/your_discogs_username/collection/folders/1/releases/290897/instances/999"
+}
+JSON
+  ;;
+
+version)
+  echo "stub-1.0.0"
+  ;;
+
+*)
+  echo "wtd-stub: unknown subcommand: $subcommand" >&2
+  exit 1
+  ;;
+
+esac

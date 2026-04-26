@@ -1,0 +1,96 @@
+[tools]
+go = "1.25.5"
+goreleaser = "2.9.0"
+
+[env]
+_.file = ".env"
+
+[tasks.build]
+run = "go build -o wtd ."
+description = "Build the wtd binary"
+
+[tasks.install]
+run = "go install ."
+description = "Install wtd to GOPATH/bin"
+
+[tasks.clean]
+run = "rm -f wtd"
+description = "Remove local wtd binary"
+
+[tasks.vet]
+run = "go vet ./..."
+description = "Run go vet"
+
+[tasks.test]
+run = "go test ./..."
+description = "Run tests"
+
+[tasks.release-snapshot]
+run = "goreleaser release --snapshot --clean"
+description = "Build snapshot release locally (no publish)"
+
+# Stub mode: use scripts/wtd-stub in place of the compiled binary.
+# Useful for developing and testing the skill before Phase 2 is complete.
+[tasks.use-stub]
+run = """
+cp scripts/wtd-stub wtd
+chmod +x wtd
+echo "wtd is now the stub (scripts/wtd-stub). Run 'mise run use-real' to switch back."
+"""
+description = "Replace ./wtd with the shell stub for skill development"
+
+[tasks.use-real]
+run = """
+rm -f wtd
+mise run build
+echo "wtd is now the compiled binary."
+"""
+description = "Build and use the real compiled wtd binary"
+depends = ["clean"]
+
+# ── Distribution ──────────────────────────────────────────────────────────────
+
+[tasks.install-skill]
+run = """
+dest="$HOME/.claude/skills/identify-vinyl"
+mkdir -p "$dest"
+cp .claude/skills/identify-vinyl/SKILL.md "$dest/SKILL.md"
+echo "✓ Skill installed to $dest"
+echo "  /identify-vinyl is now available in any Claude Code session."
+echo ""
+echo "  Make sure wtd is on your PATH:"
+echo "  mise use -g github:richardthe3rd/what-the-discogs@latest"
+"""
+description = "Install /identify-vinyl skill globally for all Claude Code sessions"
+
+[tasks.setup-desktop]
+run = """
+config_dir=""
+case "$(uname)" in
+  Darwin) config_dir="$HOME/Library/Application Support/Claude" ;;
+  Linux)  config_dir="$HOME/.config/Claude" ;;
+  *)      config_dir="$APPDATA/Claude" ;;
+esac
+
+echo "Add this to: $config_dir/claude_desktop_config.json"
+echo ""
+cat claude_desktop_config_example.json
+echo ""
+echo "Then restart Claude Desktop."
+"""
+description = "Print the Claude Desktop MCP config snippet to add"
+
+[tasks.setup]
+run = """
+echo "=== what-the-discogs setup ==="
+echo ""
+echo "1. Installing wtd globally via mise..."
+mise use -g github:richardthe3rd/what-the-discogs@latest
+echo ""
+echo "2. Installing /identify-vinyl skill for Claude Code..."
+mise run install-skill
+echo ""
+echo "3. Claude Desktop config:"
+mise run setup-desktop
+"""
+description = "Install everything: global wtd binary + Claude Code skill + Desktop config"

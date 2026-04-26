@@ -8,7 +8,22 @@ Vinyl records from the 1960s–70s were pressed dozens or hundreds of times acro
 
 ## Claude Desktop
 
-No repo clone needed. Requires [mise](https://mise.jdx.dev) and a [Discogs token](https://www.discogs.com/settings/developers).
+Requires a [Discogs token](https://www.discogs.com/settings/developers). Choose either install method:
+
+### Option A — MCP Bundle (no mise required)
+
+Download and install the pre-built bundle with one command. No mise or Go needed.
+
+```bash
+npx @anthropic-ai/mcpb install \
+  https://github.com/richardthe3rd/what-the-discogs/releases/latest/download/what-the-discogs.mcpb
+```
+
+The installer configures Claude Desktop automatically and prompts for your Discogs token. Restart Claude Desktop when prompted.
+
+### Option B — mise
+
+Requires [mise](https://mise.jdx.dev).
 
 **1. Add to `claude_desktop_config.json`**
 
@@ -31,7 +46,7 @@ Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
 **2. Restart Claude Desktop.** That's it.
 
-`mise x` downloads the right `wtd` binary for your OS on first use and caches it — no manual install, no Go required. To pin a specific version replace `@latest` with e.g. `@v1.2.0`.
+`mise x` downloads the right `wtd` binary for your OS on first use and caches it — no Go required. To pin a specific version replace `@latest` with e.g. `@v1.2.0`.
 
 ### Using it
 

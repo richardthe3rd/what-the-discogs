@@ -30,7 +30,15 @@ Binary status: !`which wtd 2>/dev/null && echo "found: $(which wtd)" || echo "no
 ```bash
 echo ${DISCOGS_TOKEN:+set}
 ```
-If empty, tell the user to set `DISCOGS_TOKEN` (get a token at https://www.discogs.com/settings/developers) and stop.
+If empty, tell the user to set `DISCOGS_TOKEN` and stop. Direct them to:
+1. Get a token at https://www.discogs.com/settings/developers
+2. Set it permanently in their shell profile (`~/.zshrc`, `~/.bashrc`, or `~/.profile`):
+   ```
+   export DISCOGS_TOKEN=your_token_here
+   ```
+3. Or for just this session: `export DISCOGS_TOKEN=your_token_here`
+
+When running from the repo directory, a `.env` file in the repo root is also loaded automatically (via `mise` env loading). But when using the skill globally (outside the repo), only the shell environment is available — so the shell profile approach is recommended for permanent setup.
 
 > **Note:** This skill works both from the repo directory and installed globally via `~/.claude/skills/`. When used globally, `wtd` must be on PATH (step 2 or 3 above).
 
@@ -135,8 +143,8 @@ Ask: "Would you like to add this to your Discogs collection?"
 
 If yes:
 ```bash
-wtd identity
-wtd list-folders
+wtd identity        # → {"username": "..."}
+wtd list-folders    # uses identity automatically if --username omitted
 ```
 
 Show the folders and ask which one (default: Uncategorized, folder ID 1). Ask if they want to add any notes.

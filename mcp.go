@@ -119,6 +119,9 @@ func handleSearchReleases(c *Client) server.ToolHandlerFunc {
 func handleGetVersions(c *Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		masterID := int(numArg(req, "master_id"))
+		if masterID == 0 {
+			return toolErr("master_id is required and must be non-zero"), nil
+		}
 
 		versions, err := c.GetVersions(ctx, masterID)
 		if err != nil {
@@ -131,6 +134,9 @@ func handleGetVersions(c *Client) server.ToolHandlerFunc {
 func handleGetRelease(c *Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		releaseID := int(numArg(req, "release_id"))
+		if releaseID == 0 {
+			return toolErr("release_id is required and must be non-zero"), nil
+		}
 
 		detail, err := c.GetRelease(ctx, releaseID)
 		if err != nil {
@@ -188,6 +194,13 @@ func handleAddToCollection(c *Client) server.ToolHandlerFunc {
 		folderID := int(numArg(req, "folder_id"))
 		username, _ := args["username"].(string)
 		notes, _ := args["notes"].(string)
+
+		if releaseID == 0 {
+			return toolErr("release_id is required and must be non-zero"), nil
+		}
+		if folderID == 0 {
+			folderID = 1 // default: Uncategorized
+		}
 
 		if username == "" {
 			id, err := c.GetIdentity(ctx)

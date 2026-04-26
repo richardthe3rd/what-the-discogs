@@ -24,7 +24,7 @@ type Client struct {
 	token   string
 	http    *http.Client
 	cache   map[string][]byte
-	cacheMu sync.Mutex
+	cacheMu sync.RWMutex
 	limiter *rate.Limiter
 }
 
@@ -46,27 +46,31 @@ func (c *Client) get(ctx context.Context, path string, params url.Values) ([]byt
 		u += "?" + params.Encode()
 	}
 
-	c.cacheMu.Lock()
+	c.cacheMu.RLock()
 	if cached, ok := c.cache[u]; ok {
-		c.cacheMu.Unlock()
-		return cached, nil
+		out := make([]byte, len(cached))
+		copy(out, cached)
+		c.cacheMu.RUnlock()
+		return out, nil
 	}
-	c.cacheMu.Unlock()
+	c.cacheMu.RUnlock()
 
 	backoff := 2 * time.Second
-	for attempt := 0; attempt <= 3; attempt++ {
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
 		if err := c.limiter.Wait(ctx); err != nil {
 			return nil, err // context cancelled
 		}
-		body, err := c.doGet(u)
+		body, err := c.doGet(ctx, u)
 		if err == nil {
 			c.cacheMu.Lock()
 			c.cache[u] = body
 			c.cacheMu.Unlock()
 			return body, nil
 		}
+		lastErr = err
 		if !isRateLimit(err) || attempt == 3 {
-			return nil, err
+			break
 		}
 		select {
 		case <-ctx.Done():
@@ -75,11 +79,11 @@ func (c *Client) get(ctx context.Context, path string, params url.Values) ([]byt
 		}
 		backoff *= 2
 	}
-	return nil, fmt.Errorf("request failed after retries")
+	return nil, lastErr
 }
 
-func (c *Client) doGet(u string) ([]byte, error) {
-	req, err := http.NewRequest("GET", u, nil)
+func (c *Client) doGet(ctx context.Context, u string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +92,7 @@ func (c *Client) doGet(u string) ([]byte, error) {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, fmt.Errorf("GET %s: %w", u, err)
 	}
 	defer resp.Body.Close()
 
@@ -101,7 +105,7 @@ func (c *Client) doGet(u string) ([]byte, error) {
 		return nil, &rateLimitError{}
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, extractMessage(body))
+		return nil, fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, u, extractMessage(body))
 	}
 	return body, nil
 }
@@ -385,7 +389,7 @@ func (c *Client) GetIdentity(ctx context.Context) (*Identity, error) {
 
 // GetFolders returns the user's collection folders.
 func (c *Client) GetFolders(ctx context.Context, username string) ([]Folder, error) {
-	body, err := c.get(ctx, fmt.Sprintf("/users/%s/collection/folders", username), nil)
+	body, err := c.get(ctx, "/users/"+url.PathEscape(username)+"/collection/folders", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +405,7 @@ func (c *Client) GetFolders(ctx context.Context, username string) ([]Folder, err
 // AddToCollection adds a release to the user's collection.
 func (c *Client) AddToCollection(ctx context.Context, username string, folderID, releaseID int) (*CollectionInstance, error) {
 	u := fmt.Sprintf("%s/users/%s/collection/folders/%d/releases/%d",
-		baseURL, username, folderID, releaseID)
+		baseURL, url.PathEscape(username), folderID, releaseID)
 
 	if err := c.limiter.Wait(ctx); err != nil {
 		return nil, err

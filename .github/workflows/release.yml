@@ -17,8 +17,6 @@ jobs:
           fetch-depth: 0
 
       - uses: jdx/mise-action@v2
-        with:
-          experimental: true
 
       - uses: goreleaser/goreleaser-action@v6
         with:

@@ -1,0 +1,82 @@
+{
+  "manifest_version": "0.3",
+  "name": "what-the-discogs",
+  "display_name": "What The Discogs",
+  "version": "0.0.0",
+  "description": "Identify vinyl record pressings using the Discogs database",
+  "long_description": "Identify the exact Discogs pressing of a vinyl record. Searches by artist and album, retrieves all known pressings with country, year, label and catalogue number, fetches full pressing details including matrix/runout etchings and barcode identifiers, and can add confirmed records to your Discogs collection. Drop a photo of the label or dead wax, or just describe what you have.",
+  "author": {
+    "name": "richardthe3rd",
+    "url": "https://github.com/richardthe3rd/what-the-discogs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/richardthe3rd/what-the-discogs.git"
+  },
+  "homepage": "https://github.com/richardthe3rd/what-the-discogs",
+  "support": "https://github.com/richardthe3rd/what-the-discogs/issues",
+  "server": {
+    "type": "binary",
+    "entry_point": "server/wtd-darwin-universal",
+    "mcp_config": {
+      "command": "${__dirname}/server/wtd-darwin-universal",
+      "args": ["mcp"],
+      "env": {
+        "DISCOGS_TOKEN": "${user_config.discogs_token}"
+      },
+      "platform_overrides": {
+        "win32": {
+          "command": "${__dirname}/server/wtd-windows-amd64.exe"
+        },
+        "linux": {
+          "command": "${__dirname}/server/wtd-linux-amd64"
+        }
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "search_masters",
+      "description": "Search Discogs for master releases matching an artist and album name. Returns a list of masters with version counts. Use this first when identifying a record."
+    },
+    {
+      "name": "search_releases",
+      "description": "Search Discogs for individual releases. Use as a fallback when search_masters returns no results."
+    },
+    {
+      "name": "get_versions",
+      "description": "Get all known pressings and versions of a master release. Returns country, year, label, catalogue number, and format for each."
+    },
+    {
+      "name": "get_release",
+      "description": "Get full detail for a specific release, including matrix/runout etchings, barcodes, pressing plant, and cover art."
+    },
+    {
+      "name": "get_identity",
+      "description": "Get the Discogs username for the authenticated token."
+    },
+    {
+      "name": "list_folders",
+      "description": "List the user's Discogs collection folders."
+    },
+    {
+      "name": "add_to_collection",
+      "description": "Add an identified release to the user's Discogs collection."
+    }
+  ],
+  "keywords": ["vinyl", "discogs", "music", "record", "identification", "pressing"],
+  "license": "MIT",
+  "privacy_policies": ["https://www.discogs.com/privacy"],
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"]
+  },
+  "user_config": {
+    "discogs_token": {
+      "type": "string",
+      "title": "Discogs API Token",
+      "description": "Personal access token from discogs.com/settings/developers. Required to access the Discogs API.",
+      "sensitive": true,
+      "required": true
+    }
+  }
+}

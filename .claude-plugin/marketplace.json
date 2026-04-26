@@ -1,0 +1,17 @@
+{
+  "name": "what-the-discogs",
+  "owner": {
+    "name": "richardthe3rd"
+  },
+  "metadata": {
+    "description": "Vinyl record pressing identification tools for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "what-the-discogs",
+      "source": "./plugins/what-the-discogs",
+      "description": "Identify the exact Discogs pressing of a vinyl record via guided Q&A",
+      "homepage": "https://github.com/richardthe3rd/what-the-discogs"
+    }
+  ]
+}

@@ -70,11 +70,13 @@ Run these two commands inside Claude Code (no terminal, no git clone needed):
 /plugin install what-the-discogs@what-the-discogs
 ```
 
-Then set your Discogs token (add to `~/.zshrc` or `~/.bashrc`):
+Add your Discogs token to your shell profile so it's available in every session. Add this line to `~/.zshrc` (Zsh) or `~/.bashrc` (Bash):
 
 ```bash
 export DISCOGS_TOKEN=your_token_here
 ```
+
+Then reload your shell (`source ~/.zshrc`) or open a new terminal.
 
 Run `/reload-plugins`, then use it in any Claude Code session:
 

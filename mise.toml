@@ -1,5 +1,5 @@
 [tools]
-go = "1.23"
+go = "1.25.5"
 goreleaser = "latest"
 
 [env]
@@ -47,3 +47,50 @@ echo "wtd is now the compiled binary."
 """
 description = "Build and use the real compiled wtd binary"
 depends = ["clean"]
+
+# ── Distribution ──────────────────────────────────────────────────────────────
+
+[tasks.install-skill]
+run = """
+dest="$HOME/.claude/skills/identify-vinyl"
+mkdir -p "$dest"
+cp .claude/skills/identify-vinyl/SKILL.md "$dest/SKILL.md"
+echo "✓ Skill installed to $dest"
+echo "  /identify-vinyl is now available in any Claude Code session."
+echo ""
+echo "  Make sure wtd is on your PATH:"
+echo "  mise use -g github:richardthe3rd/what-the-discogs@latest"
+"""
+description = "Install /identify-vinyl skill globally for all Claude Code sessions"
+
+[tasks.setup-desktop]
+run = """
+config_dir=""
+case "$(uname)" in
+  Darwin) config_dir="$HOME/Library/Application Support/Claude" ;;
+  Linux)  config_dir="$HOME/.config/Claude" ;;
+  *)      config_dir="$APPDATA/Claude" ;;
+esac
+
+echo "Add this to: $config_dir/claude_desktop_config.json"
+echo ""
+cat claude_desktop_config_example.json
+echo ""
+echo "Then restart Claude Desktop."
+"""
+description = "Print the Claude Desktop MCP config snippet to add"
+
+[tasks.setup]
+run = """
+echo "=== what-the-discogs setup ==="
+echo ""
+echo "1. Installing wtd globally via mise..."
+mise use -g github:richardthe3rd/what-the-discogs@latest
+echo ""
+echo "2. Installing /identify-vinyl skill for Claude Code..."
+mise run install-skill
+echo ""
+echo "3. Claude Desktop config:"
+mise run setup-desktop
+"""
+description = "Install everything: global wtd binary + Claude Code skill + Desktop config"

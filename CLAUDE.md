@@ -42,6 +42,7 @@ Key JSON fields for identification:
 
 - `Version`: `id`, `label`, `country`, `year` (string), `catno`, `format`, `format_descriptions`
 - `ReleaseDetail.Identifiers`: type `"Matrix / Runout"` contains etching strings
+- `ReleaseDetail.Images`: first `"primary"` image URI is cover art
 
 ## Build tasks (mise)
 
@@ -51,6 +52,14 @@ mise run install          # go install → adds wtd to GOPATH/bin
 mise run vet              # go vet ./...
 mise run test             # go test ./...
 mise run release-snapshot # local goreleaser snapshot (no publish)
+```
+
+## Distribution tasks (mise)
+
+```bash
+mise run setup            # install everything: global binary + skill + Desktop config
+mise run install-skill    # copy skill to ~/.claude/skills/identify-vinyl/
+mise run setup-desktop    # print Claude Desktop MCP config snippet
 ```
 
 ## Release
@@ -74,18 +83,18 @@ mise run build
 
 ## Claude Desktop MCP
 
-`wtd mcp` starts an MCP server over stdio. Register it in `claude_desktop_config.json`:
+`wtd mcp` starts an MCP server over stdio. Uses `mise x` for zero-install startup:
 
 ```json
 {
   "mcpServers": {
     "what-the-discogs": {
-      "command": "wtd",
-      "args": ["mcp"],
+      "command": "mise",
+      "args": ["x", "github:richardthe3rd/what-the-discogs@latest", "--", "wtd", "mcp"],
       "env": { "DISCOGS_TOKEN": "..." }
     }
   }
 }
 ```
 
-See `docs/adr/004-mcp-server-claude-desktop.md` for full rationale and setup.
+See `claude_desktop_config_example.json` and `docs/adr/004-mcp-server-claude-desktop.md`.

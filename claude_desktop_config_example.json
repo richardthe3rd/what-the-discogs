@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "what-the-discogs": {
+      "command": "mise",
+      "args": ["x", "github:richardthe3rd/what-the-discogs@latest", "--", "wtd", "mcp"],
+      "env": {
+        "DISCOGS_TOKEN": "your_discogs_personal_access_token_here"
+      }
+    }
+  }
+}

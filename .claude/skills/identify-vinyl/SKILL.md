@@ -1,27 +1,38 @@
 ---
 name: identify-vinyl
 description: Identify the exact Discogs pressing of a vinyl record via guided Q&A. Optionally pass an image path to start from a photo.
-allowed-tools: Bash(wtd *), Bash(go *), Bash(which *), Bash(mise *), Read
+allowed-tools: Bash(wtd *), Bash(mise *), Bash(go *), Bash(which *), Read
 ---
 
 # Vinyl Record Identification
 
 You are helping the user identify the exact Discogs pressing of a vinyl record they have in front of them.
 
-Binary status: !`which wtd 2>/dev/null && echo "found at $(which wtd)" || echo "not found"`
+Binary status: !`which wtd 2>/dev/null && echo "found: $(which wtd)" || echo "not found"`
 
 ## Phase 0: Setup
 
-**Locate the `wtd` binary** (check the binary status line above):
+**Ensure `wtd` is available.** Check the binary status line above, then:
 
-1. If `wtd` is found on PATH: use it directly.
-2. If not found, try: `go install github.com/richardthe3rd/what-the-discogs@latest`
-3. If that fails (Go not installed or package not published): `go build -o wtd .` from the repo root.
-4. If all fail: tell the user to follow the README setup steps and stop.
+1. **Found** — nothing to do.
+2. **Not found, mise available** (`which mise` succeeds):
+   ```bash
+   mise use -g github:richardthe3rd/what-the-discogs@latest
+   ```
+   This installs `wtd` globally via a mise shim — available in every future session.
+3. **Not found, Go available** (`which go` succeeds):
+   ```bash
+   go install github.com/richardthe3rd/what-the-discogs@latest
+   ```
+4. **Nothing available** — tell the user to install mise (`curl https://mise.jdx.dev/install.sh | sh`) or download a binary from https://github.com/richardthe3rd/what-the-discogs/releases, then retry.
 
-**Verify DISCOGS_TOKEN**: Run `echo ${DISCOGS_TOKEN:+set}`. If not set, tell the user to add it to `.env` and stop.
+**Verify DISCOGS_TOKEN is set:**
+```bash
+echo ${DISCOGS_TOKEN:+set}
+```
+If empty, tell the user to set `DISCOGS_TOKEN` (get a token at https://www.discogs.com/settings/developers) and stop.
 
-> NOTE: This skill is a work in progress. The `wtd` binary subcommands are not yet fully implemented. Phase 2 of development will complete the binary; Phase 3 will complete this skill. For now, verify setup works and provide a helpful "coming soon" message if the binary returns "not implemented".
+> **Note:** This skill works both from the repo directory and installed globally via `~/.claude/skills/`. When used globally, `wtd` must be on PATH (step 2 or 3 above).
 
 ## Phase 1: Initial details
 
@@ -124,17 +135,17 @@ Ask: "Would you like to add this to your Discogs collection?"
 
 If yes:
 ```bash
-wtd identity                          # get username
-wtd list-folders --username USERNAME  # list their folders
+wtd identity
+wtd list-folders
 ```
 
-Show the folders and ask which one (default: Uncategorized, folder ID 0). Ask if they want to add any notes.
+Show the folders and ask which one (default: Uncategorized, folder ID 1). Ask if they want to add any notes.
 
 ```bash
-wtd add-to-collection --username USERNAME --release-id ID --folder-id FOLDER_ID --notes "NOTES"
+wtd add-to-collection --release-id ID --folder-id FOLDER_ID --notes "NOTES"
 ```
 
-Confirm success.
+Confirm success and show the user's collection URL.
 
 ---
 

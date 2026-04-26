@@ -28,11 +28,11 @@ cp "$ROOT_DIR/dist/wtd_darwin_all/wtd"           "$BUNDLE_STAGE/server/wtd-darwi
 
 # ── Linux ──────────────────────────────────────────────────────────────────
 cp "$ROOT_DIR/dist/wtd_linux_amd64_v1/wtd"       "$BUNDLE_STAGE/server/wtd-linux-amd64"
-cp "$ROOT_DIR/dist/wtd_linux_arm64/wtd"           "$BUNDLE_STAGE/server/wtd-linux-arm64"
+cp "$ROOT_DIR/dist/wtd_linux_arm64_v8.0/wtd"      "$BUNDLE_STAGE/server/wtd-linux-arm64"
 
 # ── Windows ────────────────────────────────────────────────────────────────
 cp "$ROOT_DIR/dist/wtd_windows_amd64_v1/wtd.exe"  "$BUNDLE_STAGE/server/wtd-windows-amd64.exe"
-cp "$ROOT_DIR/dist/wtd_windows_arm64/wtd.exe"     "$BUNDLE_STAGE/server/wtd-windows-arm64.exe"
+cp "$ROOT_DIR/dist/wtd_windows_arm64_v8.0/wtd.exe" "$BUNDLE_STAGE/server/wtd-windows-arm64.exe"
 
 # Make non-Windows binaries executable
 chmod +x \

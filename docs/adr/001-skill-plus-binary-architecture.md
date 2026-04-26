@@ -31,7 +31,7 @@ Option B: Claude Code skill + Go binary.
 ## Consequences
 
 - Users need Claude Code installed (they already have it to run this skill).
-- The Go binary has no external dependencies — stdlib only. Easy to compile and distribute via GoReleaser.
+- The Go binary is straightforward to compile and distribute via GoReleaser. It is not stdlib-only: it depends on `golang.org/x/time` (rate limiting) and `github.com/mark3labs/mcp-go` (MCP server), plus their transitives — all resolved at build time and statically linked into the binary.
 - Identification quality depends on Claude's reasoning. This is a feature: it improves as Claude models improve, without code changes.
 - The binary is invoked via `Bash` tool calls within the skill. JSON parsing happens in Claude's context window.
 - For very large version sets (500+ versions), the JSON may be large. Claude handles this but it consumes context.

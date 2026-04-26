@@ -77,7 +77,7 @@ func toolAddToCollection() mcp.Tool {
 	return mcp.NewTool("add_to_collection",
 		mcp.WithDescription("Add an identified release to the user's Discogs collection. Only call this after the user has confirmed they want to add it."),
 		mcp.WithNumber("release_id", mcp.Required(), mcp.Description("Release ID to add")),
-		mcp.WithNumber("folder_id", mcp.Required(), mcp.Description("Collection folder ID (use 1 for Uncategorized)")),
+		mcp.WithNumber("folder_id", mcp.Description("Collection folder ID. If omitted, defaults to 1 (Uncategorized)")),
 		mcp.WithString("username", mcp.Description("Discogs username. If omitted, fetched automatically.")),
 		mcp.WithString("notes", mcp.Description("Optional notes to display alongside the confirmation (not stored by Discogs API)")),
 	)
@@ -145,7 +145,10 @@ func handleGetRelease(c *Client) server.ToolHandlerFunc {
 
 		// Build a rich text result for Desktop: JSON data + inline cover art
 		// when a primary image is available.
-		b, _ := json.MarshalIndent(detail, "", "  ")
+		b, err := json.MarshalIndent(detail, "", "  ")
+		if err != nil {
+			return toolErr("marshaling release details: %v", err), nil
+		}
 		text := string(b)
 
 		img := primaryImage(detail.Images)

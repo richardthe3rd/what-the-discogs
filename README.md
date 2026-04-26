@@ -116,7 +116,7 @@ wtd mcp                                          start MCP server (stdio)
 ```
 
 Key JSON fields for identification:
-- `Version`: `id`, `label`, `country`, `year`, `catno`, `format`, `format_descriptions`
+- `Version`: `id`, `label`, `country`, `released`, `catno`, `format`, `format_descriptions`
 - `ReleaseDetail.Identifiers`: type `"Matrix / Runout"` contains etching strings
 - `ReleaseDetail.Images`: first `"primary"` image URI is the cover art
 

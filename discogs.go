@@ -63,10 +63,12 @@ func (c *Client) get(ctx context.Context, path string, params url.Values) ([]byt
 		}
 		body, err := c.doGet(ctx, u)
 		if err == nil {
+			out := make([]byte, len(body))
+			copy(out, body)
 			c.cacheMu.Lock()
 			c.cache[u] = body
 			c.cacheMu.Unlock()
-			return body, nil
+			return out, nil
 		}
 		lastErr = err
 		if !isRateLimit(err) || attempt == 3 {
@@ -407,37 +409,57 @@ func (c *Client) AddToCollection(ctx context.Context, username string, folderID,
 	u := fmt.Sprintf("%s/users/%s/collection/folders/%d/releases/%d",
 		baseURL, url.PathEscape(username), folderID, releaseID)
 
-	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, err
-	}
+	backoff := 2 * time.Second
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
+		if err := c.limiter.Wait(ctx); err != nil {
+			return nil, err
+		}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", u, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Discogs token="+c.token)
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Content-Type", "application/json")
+		req, err := http.NewRequestWithContext(ctx, "POST", u, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Discogs token="+c.token)
+		req.Header.Set("User-Agent", userAgent)
+		req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("POST %s: %w", u, err)
+		}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, extractMessage(body))
-	}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("reading response: %w", readErr)
+		}
 
-	var instance CollectionInstance
-	if err := json.Unmarshal(body, &instance); err != nil {
-		return nil, fmt.Errorf("parsing response: %w", err)
+		if resp.StatusCode == 429 {
+			lastErr = &rateLimitError{}
+			if attempt == 3 {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+			continue
+		}
+
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, extractMessage(body))
+		}
+
+		var instance CollectionInstance
+		if err := json.Unmarshal(body, &instance); err != nil {
+			return nil, fmt.Errorf("parsing response: %w", err)
+		}
+		return &instance, nil
 	}
-	return &instance, nil
+	return nil, lastErr
 }
 
 func primaryFormat(majorFormats []string, formatStr string) string {

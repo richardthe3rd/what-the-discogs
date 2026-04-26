@@ -56,7 +56,7 @@ Claude examines the version data and identifies which of these fields have multi
 | `format` | What format is your record? (LP, Single, EP...) |
 | `country` | What country is printed on the label? |
 | `label` | What record label is on the label? |
-| `year` | What year is printed on the label? |
+| `released` | What year is printed on the label? |
 | `catno` | What's the catalogue number? |
 | `format_descriptions` | Any additional descriptors? (Stereo, Mono, Promo...) |
 

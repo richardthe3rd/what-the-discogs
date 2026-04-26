@@ -29,4 +29,4 @@ Use [mise](https://mise.jdx.dev/) (`mise.toml`).
 - Contributors need `mise` installed (`curl https://mise.jdx.dev/install.sh | sh`).
 - The `.env` file is gitignored; `.env.example` is committed as a template.
 - `mise run build` is the canonical way to build — the README and CLAUDE.md document this.
-- CI uses `jdx/mise-action` with `experimental: true` for task support.
+- CI uses `jdx/mise-action` (no `experimental` flag — mise tasks are stable in current versions).

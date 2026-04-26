@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -155,45 +157,21 @@ func (c *Client) SearchMasters(ctx context.Context, artist, title string) ([]Mas
 		return nil, fmt.Errorf("parsing search results: %w", err)
 	}
 
-	results := make([]MasterResult, 0, len(resp.Results))
 	limit := len(resp.Results)
 	if limit > 10 {
 		limit = 10
 	}
+	results := make([]MasterResult, 0, limit)
 	for _, r := range resp.Results[:limit] {
 		year, _ := strconv.Atoi(r.Year)
-		mr := MasterResult{
+		results = append(results, MasterResult{
 			ID:    r.ID,
 			Title: r.Title,
 			Year:  year,
 			URL:   fmt.Sprintf("https://www.discogs.com/master/%d", r.ID),
-		}
-		if master, err := c.GetMaster(ctx, r.ID); err == nil {
-			mr.VersionsCount = master.VersionsCount
-		}
-		results = append(results, mr)
+		})
 	}
 	return results, nil
-}
-
-type masterResponse struct {
-	ID            int    `json:"id"`
-	Title         string `json:"title"`
-	Year          int    `json:"year"`
-	VersionsCount int    `json:"versions_count"`
-	URI           string `json:"uri"`
-}
-
-func (c *Client) GetMaster(ctx context.Context, masterID int) (*masterResponse, error) {
-	body, err := c.get(ctx, fmt.Sprintf("/masters/%d", masterID), nil)
-	if err != nil {
-		return nil, err
-	}
-	var m masterResponse
-	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, fmt.Errorf("parsing master: %w", err)
-	}
-	return &m, nil
 }
 
 // SearchReleases searches for releases (fallback when no master exists).
@@ -224,8 +202,12 @@ func (c *Client) SearchReleases(ctx context.Context, artist, title string) ([]Ve
 		return nil, fmt.Errorf("parsing search results: %w", err)
 	}
 
-	versions := make([]Version, 0, len(resp.Results))
-	for _, r := range resp.Results {
+	limit := len(resp.Results)
+	if limit > 10 {
+		limit = 10
+	}
+	versions := make([]Version, 0, limit)
+	for _, r := range resp.Results[:limit] {
 		label := ""
 		if len(r.Label) > 0 {
 			label = r.Label[0]
@@ -296,7 +278,15 @@ func (c *Client) GetVersions(ctx context.Context, masterID int) ([]Version, erro
 			})
 		}
 
-		if page >= resp.Pagination.Pages {
+		if len(all) > 500 && len(all) <= 500+len(resp.Versions) {
+			// Emit a warning once when we cross 500 — the caller (Claude) will
+			// see this in stderr and can mention it to the user.
+			fmt.Fprintf(os.Stderr, "warning: %d versions found for master %d; large sets may take longer to process\n", resp.Pagination.Items, masterID)
+		}
+		if page >= resp.Pagination.Pages || len(all) >= 1500 {
+			if len(all) >= 1500 {
+				fmt.Fprintf(os.Stderr, "warning: version list truncated at %d; master %d has %d total\n", len(all), masterID, resp.Pagination.Items)
+			}
 			break
 		}
 		page++
@@ -529,6 +519,47 @@ func (c *Client) SetInstanceNote(ctx context.Context, username string, folderID,
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// FetchImageBase64 downloads an image and returns its base64-encoded data and
+// MIME type. Discogs CDN images require the same auth token as API calls.
+func (c *Client) FetchImageBase64(ctx context.Context, imageURL string) (string, string, error) {
+	if err := c.limiter.Wait(ctx); err != nil {
+		return "", "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", imageURL, nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("Authorization", "Discogs token="+c.token)
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("fetching image: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		io.ReadAll(resp.Body)
+		return "", "", fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("reading image: %w", err)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "image/jpeg"
+	}
+	if i := strings.Index(ct, ";"); i >= 0 {
+		ct = strings.TrimSpace(ct[:i])
+	}
+
+	return base64.StdEncoding.EncodeToString(body), ct, nil
 }
 
 func primaryFormat(majorFormats []string, formatStr string) string {

@@ -143,8 +143,6 @@ func handleGetRelease(c *Client) server.ToolHandlerFunc {
 			return toolErr("fetching release: %v", err), nil
 		}
 
-		// Build a rich text result for Desktop: JSON data + inline cover art
-		// when a primary image is available.
 		b, err := json.MarshalIndent(detail, "", "  ")
 		if err != nil {
 			return toolErr("marshaling release details: %v", err), nil
@@ -153,6 +151,11 @@ func handleGetRelease(c *Client) server.ToolHandlerFunc {
 
 		img := primaryImage(detail.Images)
 		if img != "" {
+			imgData, mimeType, err := c.FetchImageBase64(ctx, img)
+			if err == nil {
+				return mcp.NewToolResultImage(text, imgData, mimeType), nil
+			}
+			// Image fetch failed — fall through to text-only with the URL noted.
 			text = fmt.Sprintf("Cover art: %s\n\n%s", img, text)
 		}
 

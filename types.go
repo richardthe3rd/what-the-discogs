@@ -1,11 +1,10 @@
 package main
 
 type MasterResult struct {
-	ID            int    `json:"id"`
-	Title         string `json:"title"`
-	Year          int    `json:"year"`
-	VersionsCount int    `json:"versions_count"`
-	URL           string `json:"url"`
+	ID    int    `json:"id"`
+	Title string `json:"title"`
+	Year  int    `json:"year"`
+	URL   string `json:"url"`
 }
 
 type Version struct {

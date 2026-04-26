@@ -110,7 +110,8 @@ func cmdRelease(ctx context.Context, c *Client) {
 }
 
 func cmdIdentity(ctx context.Context, c *Client) {
-	flag.CommandLine.Parse(os.Args[2:])
+	fs := flag.NewFlagSet("identity", flag.ExitOnError)
+	fs.Parse(os.Args[2:])
 	id, err := c.GetIdentity(ctx)
 	dieOnErr(err)
 	writeJSON(id)

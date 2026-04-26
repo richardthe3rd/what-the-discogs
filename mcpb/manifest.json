@@ -30,6 +30,9 @@
         },
         "linux": {
           "command": "${__dirname}/server/wtd-linux-amd64"
+        },
+        "linux-arm64": {
+          "command": "${__dirname}/server/wtd-linux-arm64"
         }
       }
     }

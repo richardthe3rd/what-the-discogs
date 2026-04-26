@@ -30,6 +30,44 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+dockers:
+  - image_templates:
+      - "ghcr.io/richardthe3rd/what-the-discogs:{{ .Tag }}-amd64"
+      - "ghcr.io/richardthe3rd/what-the-discogs:latest-amd64"
+    dockerfile: Dockerfile
+    use: buildx
+    goos: linux
+    goarch: amd64
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source=https://github.com/richardthe3rd/what-the-discogs"
+
+  - image_templates:
+      - "ghcr.io/richardthe3rd/what-the-discogs:{{ .Tag }}-arm64"
+      - "ghcr.io/richardthe3rd/what-the-discogs:latest-arm64"
+    dockerfile: Dockerfile
+    use: buildx
+    goos: linux
+    goarch: arm64
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source=https://github.com/richardthe3rd/what-the-discogs"
+
+docker_manifests:
+  - name_template: "ghcr.io/richardthe3rd/what-the-discogs:{{ .Tag }}"
+    image_templates:
+      - "ghcr.io/richardthe3rd/what-the-discogs:{{ .Tag }}-amd64"
+      - "ghcr.io/richardthe3rd/what-the-discogs:{{ .Tag }}-arm64"
+
+  - name_template: "ghcr.io/richardthe3rd/what-the-discogs:latest"
+    image_templates:
+      - "ghcr.io/richardthe3rd/what-the-discogs:latest-amd64"
+      - "ghcr.io/richardthe3rd/what-the-discogs:latest-arm64"
+
 changelog:
   sort: asc
   filters:

@@ -30,8 +30,16 @@ type ReleaseDetail struct {
 	Formats     []Format     `json:"formats"`
 	Identifiers []Identifier `json:"identifiers"`
 	Companies   []Company    `json:"companies"`
+	Images      []Image      `json:"images,omitempty"`
 	Notes       string       `json:"notes"`
 	URL         string       `json:"uri"`
+}
+
+type Image struct {
+	URI    string `json:"uri"`
+	Type   string `json:"type"` // "primary" or "secondary"
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
 }
 
 type Label struct {

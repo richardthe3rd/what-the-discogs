@@ -1,0 +1,254 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+)
+
+func runMCP(c *Client) error {
+	s := server.NewMCPServer(
+		"what-the-discogs",
+		version,
+		server.WithToolCapabilities(true),
+	)
+
+	s.AddTool(toolSearchMasters(), handleSearchMasters(c))
+	s.AddTool(toolSearchReleases(), handleSearchReleases(c))
+	s.AddTool(toolGetVersions(), handleGetVersions(c))
+	s.AddTool(toolGetRelease(), handleGetRelease(c))
+	s.AddTool(toolGetIdentity(), handleGetIdentity(c))
+	s.AddTool(toolListFolders(), handleListFolders(c))
+	s.AddTool(toolAddToCollection(), handleAddToCollection(c))
+
+	return server.ServeStdio(s)
+}
+
+// --- Tool definitions ---
+
+func toolSearchMasters() mcp.Tool {
+	return mcp.NewTool("search_masters",
+		mcp.WithDescription("Search Discogs for master releases matching an artist and album name. Returns a list of masters with version counts. Use this first when identifying a record."),
+		mcp.WithString("artist", mcp.Required(), mcp.Description("Artist or band name")),
+		mcp.WithString("album", mcp.Required(), mcp.Description("Album or release title")),
+	)
+}
+
+func toolSearchReleases() mcp.Tool {
+	return mcp.NewTool("search_releases",
+		mcp.WithDescription("Search Discogs for individual releases. Use as a fallback when search_masters returns no results — some one-off pressings have no master."),
+		mcp.WithString("artist", mcp.Required(), mcp.Description("Artist or band name")),
+		mcp.WithString("album", mcp.Required(), mcp.Description("Album or release title")),
+	)
+}
+
+func toolGetVersions() mcp.Tool {
+	return mcp.NewTool("get_versions",
+		mcp.WithDescription("Get all known pressings and versions of a master release. Returns country, year, label, catalogue number, and format for each. Use this to understand what variants exist before asking the user questions."),
+		mcp.WithNumber("master_id", mcp.Required(), mcp.Description("Master release ID from search_masters")),
+	)
+}
+
+func toolGetRelease() mcp.Tool {
+	return mcp.NewTool("get_release",
+		mcp.WithDescription("Get full detail for a specific release, including matrix/runout etchings, barcodes, pressing plant, and cover art. Use this when you need to distinguish between pressings that look identical in the versions list."),
+		mcp.WithNumber("release_id", mcp.Required(), mcp.Description("Release ID")),
+	)
+}
+
+func toolGetIdentity() mcp.Tool {
+	return mcp.NewTool("get_identity",
+		mcp.WithDescription("Get the Discogs username for the authenticated token. Use this before list_folders or add_to_collection when no username is known."),
+	)
+}
+
+func toolListFolders() mcp.Tool {
+	return mcp.NewTool("list_folders",
+		mcp.WithDescription("List the user's Discogs collection folders. Call get_identity first if you don't have the username."),
+		mcp.WithString("username", mcp.Description("Discogs username. If omitted, fetched automatically via get_identity.")),
+	)
+}
+
+func toolAddToCollection() mcp.Tool {
+	return mcp.NewTool("add_to_collection",
+		mcp.WithDescription("Add an identified release to the user's Discogs collection. Only call this after the user has confirmed they want to add it."),
+		mcp.WithNumber("release_id", mcp.Required(), mcp.Description("Release ID to add")),
+		mcp.WithNumber("folder_id", mcp.Required(), mcp.Description("Collection folder ID (use 1 for Uncategorized)")),
+		mcp.WithString("username", mcp.Description("Discogs username. If omitted, fetched automatically.")),
+		mcp.WithString("notes", mcp.Description("Optional notes to display alongside the confirmation (not stored by Discogs API)")),
+	)
+}
+
+// --- Handlers ---
+
+func handleSearchMasters(c *Client) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgs(req)
+		artist, _ := args["artist"].(string)
+		album, _ := args["album"].(string)
+
+		results, err := c.SearchMasters(ctx, artist, album)
+		if err != nil {
+			return toolErr("search failed: %v", err), nil
+		}
+		if len(results) == 0 {
+			return mcp.NewToolResultText("No master releases found. Try search_releases as a fallback."), nil
+		}
+		return toolJSON(results), nil
+	}
+}
+
+func handleSearchReleases(c *Client) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgs(req)
+		artist, _ := args["artist"].(string)
+		album, _ := args["album"].(string)
+
+		results, err := c.SearchReleases(ctx, artist, album)
+		if err != nil {
+			return toolErr("search failed: %v", err), nil
+		}
+		return toolJSON(results), nil
+	}
+}
+
+func handleGetVersions(c *Client) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		masterID := int(numArg(req, "master_id"))
+
+		versions, err := c.GetVersions(ctx, masterID)
+		if err != nil {
+			return toolErr("fetching versions: %v", err), nil
+		}
+		return toolJSON(versions), nil
+	}
+}
+
+func handleGetRelease(c *Client) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		releaseID := int(numArg(req, "release_id"))
+
+		detail, err := c.GetRelease(ctx, releaseID)
+		if err != nil {
+			return toolErr("fetching release: %v", err), nil
+		}
+
+		// Build a rich text result for Desktop: JSON data + inline cover art
+		// when a primary image is available.
+		b, _ := json.MarshalIndent(detail, "", "  ")
+		text := string(b)
+
+		img := primaryImage(detail.Images)
+		if img != "" {
+			text = fmt.Sprintf("Cover art: %s\n\n%s", img, text)
+		}
+
+		return mcp.NewToolResultText(text), nil
+	}
+}
+
+func handleGetIdentity(c *Client) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		id, err := c.GetIdentity(ctx)
+		if err != nil {
+			return toolErr("fetching identity: %v", err), nil
+		}
+		return toolJSON(id), nil
+	}
+}
+
+func handleListFolders(c *Client) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgs(req)
+		username, _ := args["username"].(string)
+		if username == "" {
+			id, err := c.GetIdentity(ctx)
+			if err != nil {
+				return toolErr("fetching identity: %v", err), nil
+			}
+			username = id.Username
+		}
+
+		folders, err := c.GetFolders(ctx, username)
+		if err != nil {
+			return toolErr("fetching folders: %v", err), nil
+		}
+		return toolJSON(folders), nil
+	}
+}
+
+func handleAddToCollection(c *Client) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgs(req)
+		releaseID := int(numArg(req, "release_id"))
+		folderID := int(numArg(req, "folder_id"))
+		username, _ := args["username"].(string)
+		notes, _ := args["notes"].(string)
+
+		if username == "" {
+			id, err := c.GetIdentity(ctx)
+			if err != nil {
+				return toolErr("fetching identity: %v", err), nil
+			}
+			username = id.Username
+		}
+
+		instance, err := c.AddToCollection(ctx, username, folderID, releaseID)
+		if err != nil {
+			return toolErr("adding to collection: %v", err), nil
+		}
+
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Added to collection.\n")
+		fmt.Fprintf(&sb, "Instance ID: %d\n", instance.InstanceID)
+		fmt.Fprintf(&sb, "URL: https://www.discogs.com/user/%s/collection\n", username)
+		if notes != "" {
+			fmt.Fprintf(&sb, "Notes: %s\n", notes)
+		}
+		return mcp.NewToolResultText(sb.String()), nil
+	}
+}
+
+// --- Helpers ---
+
+func toolJSON(v any) *mcp.CallToolResult {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return toolErr("encoding result: %v", err)
+	}
+	return mcp.NewToolResultText(string(b))
+}
+
+func toolErr(format string, args ...any) *mcp.CallToolResult {
+	return mcp.NewToolResultError(fmt.Sprintf(format, args...))
+}
+
+func getArgs(req mcp.CallToolRequest) map[string]any {
+	if args, ok := req.Params.Arguments.(map[string]any); ok {
+		return args
+	}
+	return map[string]any{}
+}
+
+func numArg(req mcp.CallToolRequest, key string) float64 {
+	if v, ok := getArgs(req)[key].(float64); ok {
+		return v
+	}
+	return 0
+}
+
+func primaryImage(images []Image) string {
+	for _, img := range images {
+		if img.Type == "primary" {
+			return img.URI
+		}
+	}
+	if len(images) > 0 {
+		return images[0].URI
+	}
+	return ""
+}

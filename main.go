@@ -1,11 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
 )
 
 var version = "dev"
@@ -24,22 +24,28 @@ func main() {
 	}
 
 	client := NewClient(token)
+	ctx := context.Background()
 
 	switch os.Args[1] {
 	case "search-master":
-		cmdSearchMaster(client)
+		cmdSearchMaster(ctx, client)
 	case "search-release":
-		cmdSearchRelease(client)
+		cmdSearchRelease(ctx, client)
 	case "versions":
-		cmdVersions(client)
+		cmdVersions(ctx, client)
 	case "release":
-		cmdRelease(client)
+		cmdRelease(ctx, client)
 	case "identity":
-		cmdIdentity(client)
+		cmdIdentity(ctx, client)
 	case "list-folders":
-		cmdListFolders(client)
+		cmdListFolders(ctx, client)
 	case "add-to-collection":
-		cmdAddToCollection(client)
+		cmdAddToCollection(ctx, client)
+	case "mcp":
+		if err := runMCP(client); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
 	case "version":
 		fmt.Println(version)
 	default:
@@ -49,7 +55,7 @@ func main() {
 	}
 }
 
-func cmdSearchMaster(c *Client) {
+func cmdSearchMaster(ctx context.Context, c *Client) {
 	fs := flag.NewFlagSet("search-master", flag.ExitOnError)
 	artist := fs.String("artist", "", "Artist name")
 	album := fs.String("album", "", "Album/release title")
@@ -57,12 +63,12 @@ func cmdSearchMaster(c *Client) {
 	requireFlag("search-master", "artist", *artist)
 	requireFlag("search-master", "album", *album)
 
-	results, err := c.SearchMasters(*artist, *album)
+	results, err := c.SearchMasters(ctx, *artist, *album)
 	dieOnErr(err)
 	writeJSON(results)
 }
 
-func cmdSearchRelease(c *Client) {
+func cmdSearchRelease(ctx context.Context, c *Client) {
 	fs := flag.NewFlagSet("search-release", flag.ExitOnError)
 	artist := fs.String("artist", "", "Artist name")
 	album := fs.String("album", "", "Album/release title")
@@ -70,12 +76,12 @@ func cmdSearchRelease(c *Client) {
 	requireFlag("search-release", "artist", *artist)
 	requireFlag("search-release", "album", *album)
 
-	results, err := c.SearchReleases(*artist, *album)
+	results, err := c.SearchReleases(ctx, *artist, *album)
 	dieOnErr(err)
 	writeJSON(results)
 }
 
-func cmdVersions(c *Client) {
+func cmdVersions(ctx context.Context, c *Client) {
 	fs := flag.NewFlagSet("versions", flag.ExitOnError)
 	masterID := fs.Int("master", 0, "Master release ID")
 	fs.Parse(os.Args[2:])
@@ -84,12 +90,12 @@ func cmdVersions(c *Client) {
 		os.Exit(1)
 	}
 
-	versions, err := c.GetVersions(*masterID)
+	versions, err := c.GetVersions(ctx, *masterID)
 	dieOnErr(err)
 	writeJSON(versions)
 }
 
-func cmdRelease(c *Client) {
+func cmdRelease(ctx context.Context, c *Client) {
 	fs := flag.NewFlagSet("release", flag.ExitOnError)
 	id := fs.Int("id", 0, "Release ID")
 	fs.Parse(os.Args[2:])
@@ -98,41 +104,40 @@ func cmdRelease(c *Client) {
 		os.Exit(1)
 	}
 
-	detail, err := c.GetRelease(*id)
+	detail, err := c.GetRelease(ctx, *id)
 	dieOnErr(err)
 	writeJSON(detail)
 }
 
-func cmdIdentity(c *Client) {
+func cmdIdentity(ctx context.Context, c *Client) {
 	flag.CommandLine.Parse(os.Args[2:])
-	id, err := c.GetIdentity()
+	id, err := c.GetIdentity(ctx)
 	dieOnErr(err)
 	writeJSON(id)
 }
 
-func cmdListFolders(c *Client) {
+func cmdListFolders(ctx context.Context, c *Client) {
 	fs := flag.NewFlagSet("list-folders", flag.ExitOnError)
 	username := fs.String("username", "", "Discogs username")
 	fs.Parse(os.Args[2:])
 
 	if *username == "" {
-		// Auto-detect from identity.
-		id, err := c.GetIdentity()
+		id, err := c.GetIdentity(ctx)
 		dieOnErr(err)
 		*username = id.Username
 	}
 
-	folders, err := c.GetFolders(*username)
+	folders, err := c.GetFolders(ctx, *username)
 	dieOnErr(err)
 	writeJSON(folders)
 }
 
-func cmdAddToCollection(c *Client) {
+func cmdAddToCollection(ctx context.Context, c *Client) {
 	fs := flag.NewFlagSet("add-to-collection", flag.ExitOnError)
-	username := fs.String("username", "", "Discogs username (optional; auto-detected)")
+	username := fs.String("username", "", "Discogs username (auto-detected if omitted)")
 	releaseID := fs.Int("release-id", 0, "Release ID to add")
 	folderID := fs.Int("folder-id", 1, "Collection folder ID (default: 1 = Uncategorized)")
-	notes := fs.String("notes", "", "Notes to attach (informational; stored locally)")
+	notes := fs.String("notes", "", "Notes (informational; shown in output)")
 	fs.Parse(os.Args[2:])
 
 	if *releaseID == 0 {
@@ -141,16 +146,14 @@ func cmdAddToCollection(c *Client) {
 	}
 
 	if *username == "" {
-		id, err := c.GetIdentity()
+		id, err := c.GetIdentity(ctx)
 		dieOnErr(err)
 		*username = id.Username
 	}
 
-	instance, err := c.AddToCollection(*username, *folderID, *releaseID)
+	instance, err := c.AddToCollection(ctx, *username, *folderID, *releaseID)
 	dieOnErr(err)
 
-	// Notes aren't supported by the Discogs collection API at add time;
-	// surface them in the output so the skill can show them to the user.
 	type result struct {
 		*CollectionInstance
 		Notes string `json:"notes,omitempty"`
@@ -181,12 +184,6 @@ func writeJSON(v any) {
 	}
 }
 
-// intArg is a helper used by tests.
-func intArg(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
-}
-
 func usage() {
 	fmt.Fprint(os.Stderr, `wtd — Discogs data tool for vinyl identification
 
@@ -200,6 +197,7 @@ Subcommands:
   identity
   list-folders    [--username STR]
   add-to-collection --release-id INT [--folder-id INT] [--username STR] [--notes STR]
+  mcp             Start MCP server (stdio) for Claude Desktop
   version
 
 Environment:

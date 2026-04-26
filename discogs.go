@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -21,60 +24,58 @@ type Client struct {
 	token   string
 	http    *http.Client
 	cache   map[string][]byte
-	mu      sync.Mutex
-	lastReq time.Time
+	cacheMu sync.Mutex
+	limiter *rate.Limiter
 }
 
 func NewClient(token string) *Client {
 	return &Client{
-		token:  token,
-		http:   &http.Client{Timeout: 30 * time.Second},
-		cache:  make(map[string][]byte),
+		token: token,
+		http:  &http.Client{Timeout: 30 * time.Second},
+		cache: make(map[string][]byte),
+		// 1 token/sec refill, burst of 3 — allows the first few calls in a
+		// session to fire immediately before throttling to 1/sec. Well within
+		// the 25/sec authenticated Discogs limit.
+		limiter: rate.NewLimiter(rate.Every(time.Second), 3),
 	}
 }
 
-func (c *Client) get(path string, params url.Values) ([]byte, error) {
+func (c *Client) get(ctx context.Context, path string, params url.Values) ([]byte, error) {
 	u := baseURL + path
 	if len(params) > 0 {
 		u += "?" + params.Encode()
 	}
 
-	c.mu.Lock()
+	c.cacheMu.Lock()
 	if cached, ok := c.cache[u]; ok {
-		c.mu.Unlock()
+		c.cacheMu.Unlock()
 		return cached, nil
 	}
+	c.cacheMu.Unlock()
 
-	// Enforce 1 req/sec rate limit.
-	since := time.Since(c.lastReq)
-	if since < time.Second {
-		time.Sleep(time.Second - since)
-	}
-	c.lastReq = time.Now()
-	c.mu.Unlock()
-
-	var body []byte
-	var err error
 	backoff := 2 * time.Second
 	for attempt := 0; attempt <= 3; attempt++ {
-		body, err = c.doGet(u)
+		if err := c.limiter.Wait(ctx); err != nil {
+			return nil, err // context cancelled
+		}
+		body, err := c.doGet(u)
 		if err == nil {
-			break
+			c.cacheMu.Lock()
+			c.cache[u] = body
+			c.cacheMu.Unlock()
+			return body, nil
 		}
 		if !isRateLimit(err) || attempt == 3 {
 			return nil, err
 		}
-		time.Sleep(backoff)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+		}
 		backoff *= 2
 	}
-	if err != nil {
-		return nil, err
-	}
-
-	c.mu.Lock()
-	c.cache[u] = body
-	c.mu.Unlock()
-	return body, nil
+	return nil, fmt.Errorf("request failed after retries")
 }
 
 func (c *Client) doGet(u string) ([]byte, error) {
@@ -100,8 +101,7 @@ func (c *Client) doGet(u string) ([]byte, error) {
 		return nil, &rateLimitError{}
 	}
 	if resp.StatusCode >= 400 {
-		msg := extractMessage(body)
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, msg)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, extractMessage(body))
 	}
 	return body, nil
 }
@@ -126,13 +126,13 @@ func extractMessage(body []byte) string {
 }
 
 // SearchMasters searches for master releases matching artist and title.
-func (c *Client) SearchMasters(artist, title string) ([]MasterResult, error) {
+func (c *Client) SearchMasters(ctx context.Context, artist, title string) ([]MasterResult, error) {
 	params := url.Values{
 		"artist": {artist},
 		"q":      {title},
 		"type":   {"master"},
 	}
-	body, err := c.get("/database/search", params)
+	body, err := c.get(ctx, "/database/search", params)
 	if err != nil {
 		return nil, err
 	}
@@ -142,21 +142,12 @@ func (c *Client) SearchMasters(artist, title string) ([]MasterResult, error) {
 			ID    int    `json:"id"`
 			Title string `json:"title"`
 			Year  string `json:"year"`
-			Stats struct {
-				Community struct {
-					InWantlist   int `json:"in_wantlist"`
-					InCollection int `json:"in_collection"`
-				} `json:"community"`
-			} `json:"stats"`
-			MasterURL string `json:"master_url"`
 		} `json:"results"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("parsing search results: %w", err)
 	}
 
-	// Fetch versions_count for each master separately since search doesn't include it.
-	// Limit to first 10 results to keep API calls reasonable.
 	results := make([]MasterResult, 0, len(resp.Results))
 	limit := len(resp.Results)
 	if limit > 10 {
@@ -170,10 +161,7 @@ func (c *Client) SearchMasters(artist, title string) ([]MasterResult, error) {
 			Year:  year,
 			URL:   fmt.Sprintf("https://www.discogs.com/master/%d", r.ID),
 		}
-
-		// Fetch versions_count from master endpoint.
-		master, err := c.GetMaster(r.ID)
-		if err == nil {
+		if master, err := c.GetMaster(ctx, r.ID); err == nil {
 			mr.VersionsCount = master.VersionsCount
 		}
 		results = append(results, mr)
@@ -189,8 +177,8 @@ type masterResponse struct {
 	URI           string `json:"uri"`
 }
 
-func (c *Client) GetMaster(masterID int) (*masterResponse, error) {
-	body, err := c.get(fmt.Sprintf("/masters/%d", masterID), nil)
+func (c *Client) GetMaster(ctx context.Context, masterID int) (*masterResponse, error) {
+	body, err := c.get(ctx, fmt.Sprintf("/masters/%d", masterID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -202,13 +190,13 @@ func (c *Client) GetMaster(masterID int) (*masterResponse, error) {
 }
 
 // SearchReleases searches for releases (fallback when no master exists).
-func (c *Client) SearchReleases(artist, title string) ([]Version, error) {
+func (c *Client) SearchReleases(ctx context.Context, artist, title string) ([]Version, error) {
 	params := url.Values{
 		"artist": {artist},
 		"q":      {title},
 		"type":   {"release"},
 	}
-	body, err := c.get("/database/search", params)
+	body, err := c.get(ctx, "/database/search", params)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +241,7 @@ func (c *Client) SearchReleases(artist, title string) ([]Version, error) {
 }
 
 // GetVersions returns all versions of a master release, paginated.
-func (c *Client) GetVersions(masterID int) ([]Version, error) {
+func (c *Client) GetVersions(ctx context.Context, masterID int) ([]Version, error) {
 	var all []Version
 	page := 1
 
@@ -262,23 +250,23 @@ func (c *Client) GetVersions(masterID int) ([]Version, error) {
 			"page":     {strconv.Itoa(page)},
 			"per_page": {"500"},
 		}
-		body, err := c.get(fmt.Sprintf("/masters/%d/versions", masterID), params)
+		body, err := c.get(ctx, fmt.Sprintf("/masters/%d/versions", masterID), params)
 		if err != nil {
 			return nil, err
 		}
 
 		var resp struct {
 			Versions []struct {
-				ID     int    `json:"id"`
-				Title  string `json:"title"`
-				Label  string `json:"label"`
-				Country string `json:"country"`
-				Released string `json:"released"`
-				CatNo  string `json:"catno"`
-				Format string `json:"format"`
+				ID           int      `json:"id"`
+				Title        string   `json:"title"`
+				Label        string   `json:"label"`
+				Country      string   `json:"country"`
+				Released     string   `json:"released"`
+				CatNo        string   `json:"catno"`
+				Format       string   `json:"format"`
 				MajorFormats []string `json:"major_formats"`
-				Thumb  string `json:"thumb"`
-				ResourceURL string `json:"resource_url"`
+				Thumb        string   `json:"thumb"`
+				ResourceURL  string   `json:"resource_url"`
 			} `json:"versions"`
 			Pagination Pagination `json:"pagination"`
 		}
@@ -310,8 +298,8 @@ func (c *Client) GetVersions(masterID int) ([]Version, error) {
 }
 
 // GetRelease returns full release detail for a single release.
-func (c *Client) GetRelease(releaseID int) (*ReleaseDetail, error) {
-	body, err := c.get(fmt.Sprintf("/releases/%d", releaseID), nil)
+func (c *Client) GetRelease(ctx context.Context, releaseID int) (*ReleaseDetail, error) {
+	body, err := c.get(ctx, fmt.Sprintf("/releases/%d", releaseID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -337,6 +325,12 @@ func (c *Client) GetRelease(releaseID int) (*ReleaseDetail, error) {
 			Name           string `json:"name"`
 			EntityTypeName string `json:"entity_type_name"`
 		} `json:"companies"`
+		Images []struct {
+			URI    string `json:"uri"`
+			Type   string `json:"type"`
+			Width  int    `json:"width"`
+			Height int    `json:"height"`
+		} `json:"images"`
 		Notes string `json:"notes"`
 		URI   string `json:"uri"`
 	}
@@ -356,6 +350,10 @@ func (c *Client) GetRelease(releaseID int) (*ReleaseDetail, error) {
 	for i, co := range raw.Companies {
 		companies[i] = Company{Name: co.Name, EntityTypeName: co.EntityTypeName}
 	}
+	images := make([]Image, len(raw.Images))
+	for i, img := range raw.Images {
+		images[i] = Image{URI: img.URI, Type: img.Type, Width: img.Width, Height: img.Height}
+	}
 
 	return &ReleaseDetail{
 		ID:          raw.ID,
@@ -366,14 +364,15 @@ func (c *Client) GetRelease(releaseID int) (*ReleaseDetail, error) {
 		Formats:     formats,
 		Identifiers: raw.Identifiers,
 		Companies:   companies,
+		Images:      images,
 		Notes:       raw.Notes,
 		URL:         raw.URI,
 	}, nil
 }
 
 // GetIdentity returns the authenticated user's identity.
-func (c *Client) GetIdentity() (*Identity, error) {
-	body, err := c.get("/oauth/identity", nil)
+func (c *Client) GetIdentity(ctx context.Context) (*Identity, error) {
+	body, err := c.get(ctx, "/oauth/identity", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -385,8 +384,8 @@ func (c *Client) GetIdentity() (*Identity, error) {
 }
 
 // GetFolders returns the user's collection folders.
-func (c *Client) GetFolders(username string) ([]Folder, error) {
-	body, err := c.get(fmt.Sprintf("/users/%s/collection/folders", username), nil)
+func (c *Client) GetFolders(ctx context.Context, username string) ([]Folder, error) {
+	body, err := c.get(ctx, fmt.Sprintf("/users/%s/collection/folders", username), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -400,19 +399,15 @@ func (c *Client) GetFolders(username string) ([]Folder, error) {
 }
 
 // AddToCollection adds a release to the user's collection.
-func (c *Client) AddToCollection(username string, folderID, releaseID int) (*CollectionInstance, error) {
+func (c *Client) AddToCollection(ctx context.Context, username string, folderID, releaseID int) (*CollectionInstance, error) {
 	u := fmt.Sprintf("%s/users/%s/collection/folders/%d/releases/%d",
 		baseURL, username, folderID, releaseID)
 
-	c.mu.Lock()
-	since := time.Since(c.lastReq)
-	if since < time.Second {
-		time.Sleep(time.Second - since)
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
 	}
-	c.lastReq = time.Now()
-	c.mu.Unlock()
 
-	req, err := http.NewRequest("POST", u, nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -441,29 +436,23 @@ func (c *Client) AddToCollection(username string, folderID, releaseID int) (*Col
 	return &instance, nil
 }
 
-// primaryFormat extracts the main format name (e.g. "Vinyl", "CD").
 func primaryFormat(majorFormats []string, formatStr string) string {
 	if len(majorFormats) > 0 {
 		return majorFormats[0]
 	}
-	// Fall back: take first token before comma.
 	if i := strings.Index(formatStr, ","); i >= 0 {
 		return strings.TrimSpace(formatStr[:i])
 	}
 	return formatStr
 }
 
-// parseFormatDescs extracts descriptors like "LP", "Stereo", "Reissue".
-// The versions API packs everything into a single format string like:
-//   "Vinyl, LP, Album, Stereo"
-// major_formats contains the top-level type; remaining tokens are descriptions.
 func parseFormatDescs(formatStr string, majorFormats []string) []string {
 	parts := strings.Split(formatStr, ",")
-	var descs []string
 	skip := make(map[string]bool)
 	for _, mf := range majorFormats {
 		skip[strings.TrimSpace(mf)] = true
 	}
+	var descs []string
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
 		if p != "" && !skip[p] {
@@ -473,7 +462,6 @@ func parseFormatDescs(formatStr string, majorFormats []string) []string {
 	return descs
 }
 
-// splitFormat is used for search results where format is a []string slice.
 func splitFormat(formats []string) (primary string, descs []string) {
 	if len(formats) == 0 {
 		return "", nil

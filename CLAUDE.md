@@ -29,12 +29,13 @@ wtd search-release --artist STR --album STR      → []Version
 wtd versions       --master INT                  → []Version
 wtd release        --id INT                      → ReleaseDetail
 wtd identity                                     → Identity
-wtd list-folders   --username STR               → []Folder
+wtd list-folders   [--username STR]              → []Folder
 wtd add-to-collection \
-       --username STR \
        --release-id INT \
        --folder-id INT \
+       [--username STR] \
        [--notes STR]                             → CollectionInstance
+wtd mcp                                          start MCP server (stdio)
 ```
 
 Key JSON fields for identification:
@@ -69,4 +70,22 @@ mise run build
 
 ## Rate limiting
 
-`discogs.go` enforces 1 req/sec. The Discogs authenticated limit is 25/sec — this is deliberately conservative to be friendly to the API during development.
+`discogs.go` uses a token-bucket limiter (`golang.org/x/time/rate`): 1 token/sec refill, burst of 3. The first few calls in a session fire immediately; after the burst it throttles to 1/sec. The Discogs authenticated limit is 25/sec — this is deliberately conservative. Context cancellation propagates correctly (MCP tool call cancelled → in-flight wait aborts).
+
+## Claude Desktop MCP
+
+`wtd mcp` starts an MCP server over stdio. Register it in `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "what-the-discogs": {
+      "command": "wtd",
+      "args": ["mcp"],
+      "env": { "DISCOGS_TOKEN": "..." }
+    }
+  }
+}
+```
+
+See `docs/adr/004-mcp-server-claude-desktop.md` for full rationale and setup.

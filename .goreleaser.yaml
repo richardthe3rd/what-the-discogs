@@ -7,7 +7,8 @@ before:
     - go mod tidy
 
 builds:
-  - binary: wtd
+  - id: wtd
+    binary: wtd
     goos:
       - linux
       - darwin
@@ -29,6 +30,11 @@ archives:
 
 checksum:
   name_template: "checksums.txt"
+
+universal_binaries:
+  - ids:
+      - wtd
+    replace: false
 
 changelog:
   sort: asc

@@ -496,29 +496,52 @@ func (c *Client) SetInstanceNote(ctx context.Context, username string, folderID,
 		return err
 	}
 
-	if err := c.limiter.Wait(ctx); err != nil {
-		return err
-	}
+	backoff := 2 * time.Second
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
+		if err := c.limiter.Wait(ctx); err != nil {
+			return err
+		}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", u, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Discogs token="+c.token)
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Content-Type", "application/json")
+		req, err := http.NewRequestWithContext(ctx, "POST", u, bytes.NewReader(payload))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Discogs token="+c.token)
+		req.Header.Set("User-Agent", userAgent)
+		req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("POST %s: %w", u, err)
-	}
-	defer resp.Body.Close()
-	io.ReadAll(resp.Body) // drain
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return fmt.Errorf("POST %s: %w", u, err)
+		}
 
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return fmt.Errorf("reading response: %w", readErr)
+		}
+
+		if resp.StatusCode == 429 {
+			lastErr = &rateLimitError{}
+			if attempt == 3 {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+			continue
+		}
+
+		if resp.StatusCode >= 400 {
+			return fmt.Errorf("HTTP %d: %s", resp.StatusCode, extractMessage(body))
+		}
+		return nil
 	}
-	return nil
+	return lastErr
 }
 
 // FetchImageBase64 downloads an image and returns its base64-encoded data and
@@ -541,14 +564,20 @@ func (c *Client) FetchImageBase64(ctx context.Context, imageURL string) (string,
 	}
 	defer resp.Body.Close()
 
+	const maxImageBytes = 10 << 20 // 10 MB — well above any Discogs cover art
+	limited := io.LimitReader(resp.Body, maxImageBytes+1)
+
 	if resp.StatusCode >= 400 {
-		io.ReadAll(resp.Body)
-		return "", "", fmt.Errorf("HTTP %d", resp.StatusCode)
+		errBody, _ := io.ReadAll(limited)
+		return "", "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, extractMessage(errBody))
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(limited)
 	if err != nil {
 		return "", "", fmt.Errorf("reading image: %w", err)
+	}
+	if len(body) > maxImageBytes {
+		return "", "", fmt.Errorf("image exceeds %d MB limit", maxImageBytes>>20)
 	}
 
 	ct := resp.Header.Get("Content-Type")

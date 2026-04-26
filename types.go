@@ -93,3 +93,11 @@ type Pagination struct {
 	PerPage int `json:"per_page"`
 	Items   int `json:"items"`
 }
+
+type CollectionField struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	Type     string `json:"type"` // "textarea", "dropdown", etc.
+	Position int    `json:"position"`
+	Public   bool   `json:"public"`
+}

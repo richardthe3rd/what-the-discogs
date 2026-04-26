@@ -137,7 +137,7 @@ func cmdAddToCollection(ctx context.Context, c *Client) {
 	username := fs.String("username", "", "Discogs username (auto-detected if omitted)")
 	releaseID := fs.Int("release-id", 0, "Release ID to add")
 	folderID := fs.Int("folder-id", 1, "Collection folder ID (default: 1 = Uncategorized)")
-	notes := fs.String("notes", "", "Notes (informational; shown in output)")
+	notes := fs.String("notes", "", "Notes to save to the collection instance")
 	fs.Parse(os.Args[2:])
 
 	if *releaseID == 0 {
@@ -153,6 +153,12 @@ func cmdAddToCollection(ctx context.Context, c *Client) {
 
 	instance, err := c.AddToCollection(ctx, *username, *folderID, *releaseID)
 	dieOnErr(err)
+
+	if *notes != "" {
+		if err := c.SetInstanceNote(ctx, *username, *folderID, *releaseID, instance.InstanceID, *notes); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: note not saved: %v\n", err)
+		}
+	}
 
 	type result struct {
 		*CollectionInstance

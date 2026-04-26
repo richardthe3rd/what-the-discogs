@@ -79,7 +79,7 @@ func toolAddToCollection() mcp.Tool {
 		mcp.WithNumber("release_id", mcp.Required(), mcp.Description("Release ID to add")),
 		mcp.WithNumber("folder_id", mcp.Description("Collection folder ID. If omitted, defaults to 1 (Uncategorized)")),
 		mcp.WithString("username", mcp.Description("Discogs username. If omitted, fetched automatically.")),
-		mcp.WithString("notes", mcp.Description("Optional notes to display alongside the confirmation (not stored by Discogs API)")),
+		mcp.WithString("notes", mcp.Description("Optional notes to save to the collection instance (stored in the Notes field).")),
 	)
 }
 
@@ -223,7 +223,11 @@ func handleAddToCollection(c *Client) server.ToolHandlerFunc {
 		fmt.Fprintf(&sb, "Instance ID: %d\n", instance.InstanceID)
 		fmt.Fprintf(&sb, "URL: https://www.discogs.com/user/%s/collection\n", username)
 		if notes != "" {
-			fmt.Fprintf(&sb, "Notes: %s\n", notes)
+			if err := c.SetInstanceNote(ctx, username, folderID, releaseID, instance.InstanceID, notes); err != nil {
+				fmt.Fprintf(&sb, "Notes: %s (warning: could not save to Discogs: %v)\n", notes, err)
+			} else {
+				fmt.Fprintf(&sb, "Notes: %s\n", notes)
+			}
 		}
 		return mcp.NewToolResultText(sb.String()), nil
 	}

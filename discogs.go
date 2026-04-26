@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -460,6 +461,74 @@ func (c *Client) AddToCollection(ctx context.Context, username string, folderID,
 		return &instance, nil
 	}
 	return nil, lastErr
+}
+
+// GetCollectionFields returns the user's collection fields (Media Condition,
+// Sleeve Condition, Notes, and any custom fields).
+func (c *Client) GetCollectionFields(ctx context.Context, username string) ([]CollectionField, error) {
+	body, err := c.get(ctx, "/users/"+url.PathEscape(username)+"/collection/fields", nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Fields []CollectionField `json:"fields"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parsing collection fields: %w", err)
+	}
+	return resp.Fields, nil
+}
+
+// SetInstanceNote stores a text note on a collection instance. It resolves the
+// Notes field ID dynamically via the collection fields endpoint so it works
+// regardless of whether the user has customised their field ordering.
+func (c *Client) SetInstanceNote(ctx context.Context, username string, folderID, releaseID, instanceID int, note string) error {
+	fields, err := c.GetCollectionFields(ctx, username)
+	if err != nil {
+		return fmt.Errorf("resolving Notes field: %w", err)
+	}
+	fieldID := 0
+	for _, f := range fields {
+		if f.Type == "textarea" && f.Name == "Notes" {
+			fieldID = f.ID
+			break
+		}
+	}
+	if fieldID == 0 {
+		return fmt.Errorf("Notes field not found in collection fields")
+	}
+
+	u := fmt.Sprintf("%s/users/%s/collection/folders/%d/releases/%d/instances/%d/fields/%d",
+		baseURL, url.PathEscape(username), folderID, releaseID, instanceID, fieldID)
+
+	payload, err := json.Marshal(map[string]string{"value": note})
+	if err != nil {
+		return err
+	}
+
+	if err := c.limiter.Wait(ctx); err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", u, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Discogs token="+c.token)
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", u, err)
+	}
+	defer resp.Body.Close()
+	io.ReadAll(resp.Body) // drain
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func primaryFormat(majorFormats []string, formatStr string) string {

@@ -18,6 +18,10 @@ jobs:
 
       - uses: jdx/mise-action@v2
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "2.9.0"

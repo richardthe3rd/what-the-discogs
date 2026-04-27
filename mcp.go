@@ -32,7 +32,7 @@ func runMCP(c *Client) error {
 
 func toolSearchMasters() mcp.Tool {
 	return mcp.NewTool("search_masters",
-		mcp.WithDescription("Search Discogs for master releases matching an artist and album name. Returns a list of masters with version counts. Use this first when identifying a record."),
+		mcp.WithDescription("Search Discogs for master releases matching an artist and album name. Returns a list of masters (id, title, year, url). Use this first when identifying a record."),
 		mcp.WithString("artist", mcp.Required(), mcp.Description("Artist or band name")),
 		mcp.WithString("album", mcp.Required(), mcp.Description("Album or release title")),
 	)
@@ -79,7 +79,7 @@ func toolAddToCollection() mcp.Tool {
 		mcp.WithNumber("release_id", mcp.Required(), mcp.Description("Release ID to add")),
 		mcp.WithNumber("folder_id", mcp.Description("Collection folder ID. If omitted, defaults to 1 (Uncategorized)")),
 		mcp.WithString("username", mcp.Description("Discogs username. If omitted, fetched automatically.")),
-		mcp.WithString("notes", mcp.Description("Optional notes to display alongside the confirmation (not stored by Discogs API)")),
+		mcp.WithString("notes", mcp.Description("Optional notes to save to the collection instance (stored in the Notes field).")),
 	)
 }
 
@@ -143,8 +143,6 @@ func handleGetRelease(c *Client) server.ToolHandlerFunc {
 			return toolErr("fetching release: %v", err), nil
 		}
 
-		// Build a rich text result for Desktop: JSON data + inline cover art
-		// when a primary image is available.
 		b, err := json.MarshalIndent(detail, "", "  ")
 		if err != nil {
 			return toolErr("marshaling release details: %v", err), nil
@@ -153,6 +151,11 @@ func handleGetRelease(c *Client) server.ToolHandlerFunc {
 
 		img := primaryImage(detail.Images)
 		if img != "" {
+			imgData, mimeType, err := c.FetchImageBase64(ctx, img)
+			if err == nil {
+				return mcp.NewToolResultImage(text, imgData, mimeType), nil
+			}
+			// Image fetch failed — fall through to text-only with the URL noted.
 			text = fmt.Sprintf("Cover art: %s\n\n%s", img, text)
 		}
 
@@ -223,7 +226,11 @@ func handleAddToCollection(c *Client) server.ToolHandlerFunc {
 		fmt.Fprintf(&sb, "Instance ID: %d\n", instance.InstanceID)
 		fmt.Fprintf(&sb, "URL: https://www.discogs.com/user/%s/collection\n", username)
 		if notes != "" {
-			fmt.Fprintf(&sb, "Notes: %s\n", notes)
+			if err := c.SetInstanceNote(ctx, username, folderID, releaseID, instance.InstanceID, notes); err != nil {
+				fmt.Fprintf(&sb, "Notes: %s (warning: could not save to Discogs: %v)\n", notes, err)
+			} else {
+				fmt.Fprintf(&sb, "Notes: %s\n", notes)
+			}
 		}
 		return mcp.NewToolResultText(sb.String()), nil
 	}

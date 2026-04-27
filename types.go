@@ -1,11 +1,10 @@
 package main
 
 type MasterResult struct {
-	ID            int    `json:"id"`
-	Title         string `json:"title"`
-	Year          int    `json:"year"`
-	VersionsCount int    `json:"versions_count"`
-	URL           string `json:"url"`
+	ID    int    `json:"id"`
+	Title string `json:"title"`
+	Year  int    `json:"year"`
+	URL   string `json:"url"`
 }
 
 type Version struct {
@@ -92,4 +91,12 @@ type Pagination struct {
 	Pages   int `json:"pages"`
 	PerPage int `json:"per_page"`
 	Items   int `json:"items"`
+}
+
+type CollectionField struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	Type     string `json:"type"` // "textarea", "dropdown", etc.
+	Position int    `json:"position"`
+	Public   bool   `json:"public"`
 }

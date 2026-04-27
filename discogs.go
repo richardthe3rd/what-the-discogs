@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,17 +24,27 @@ const (
 )
 
 type Client struct {
-	token   string
-	http    *http.Client
-	cache   map[string][]byte
-	cacheMu sync.RWMutex
-	limiter *rate.Limiter
+	token     string
+	http      *http.Client
+	imageHTTP *http.Client // for image fetches: enforces HTTPS and Discogs-only redirects
+	cache     map[string][]byte
+	cacheMu   sync.RWMutex
+	limiter   *rate.Limiter
 }
 
 func NewClient(token string) *Client {
 	return &Client{
 		token: token,
 		http:  &http.Client{Timeout: 30 * time.Second},
+		imageHTTP: &http.Client{
+			Timeout: 30 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if req.URL.Scheme != "https" || !strings.HasSuffix(req.URL.Hostname(), ".discogs.com") {
+					return fmt.Errorf("refusing redirect to non-Discogs HTTPS URL: %s", req.URL)
+				}
+				return nil
+			},
+		},
 		cache: make(map[string][]byte),
 		// 1 token/sec refill, burst of 3 — allows the first few calls in a
 		// session to fire immediately before throttling to 1/sec. Well within
@@ -112,6 +125,59 @@ func (c *Client) doGet(ctx context.Context, u string) ([]byte, error) {
 	return body, nil
 }
 
+// doPost executes a POST with rate-limiting and 429 backoff retry. payload may
+// be nil for bodyless POSTs. Returns the response body on success.
+func (c *Client) doPost(ctx context.Context, u string, payload []byte) ([]byte, error) {
+	backoff := 2 * time.Second
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
+		if err := c.limiter.Wait(ctx); err != nil {
+			return nil, err
+		}
+
+		var bodyReader io.Reader
+		if payload != nil {
+			bodyReader = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequestWithContext(ctx, "POST", u, bodyReader)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Discogs token="+c.token)
+		req.Header.Set("User-Agent", userAgent)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("POST %s: %w", u, err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("reading response: %w", readErr)
+		}
+
+		if resp.StatusCode == 429 {
+			lastErr = &rateLimitError{}
+			if attempt == 3 {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, extractMessage(body))
+		}
+		return body, nil
+	}
+	return nil, lastErr
+}
+
 type rateLimitError struct{}
 
 func (e *rateLimitError) Error() string { return "rate limited (429)" }
@@ -154,45 +220,21 @@ func (c *Client) SearchMasters(ctx context.Context, artist, title string) ([]Mas
 		return nil, fmt.Errorf("parsing search results: %w", err)
 	}
 
-	results := make([]MasterResult, 0, len(resp.Results))
 	limit := len(resp.Results)
 	if limit > 10 {
 		limit = 10
 	}
+	results := make([]MasterResult, 0, limit)
 	for _, r := range resp.Results[:limit] {
 		year, _ := strconv.Atoi(r.Year)
-		mr := MasterResult{
+		results = append(results, MasterResult{
 			ID:    r.ID,
 			Title: r.Title,
 			Year:  year,
 			URL:   fmt.Sprintf("https://www.discogs.com/master/%d", r.ID),
-		}
-		if master, err := c.GetMaster(ctx, r.ID); err == nil {
-			mr.VersionsCount = master.VersionsCount
-		}
-		results = append(results, mr)
+		})
 	}
 	return results, nil
-}
-
-type masterResponse struct {
-	ID            int    `json:"id"`
-	Title         string `json:"title"`
-	Year          int    `json:"year"`
-	VersionsCount int    `json:"versions_count"`
-	URI           string `json:"uri"`
-}
-
-func (c *Client) GetMaster(ctx context.Context, masterID int) (*masterResponse, error) {
-	body, err := c.get(ctx, fmt.Sprintf("/masters/%d", masterID), nil)
-	if err != nil {
-		return nil, err
-	}
-	var m masterResponse
-	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, fmt.Errorf("parsing master: %w", err)
-	}
-	return &m, nil
 }
 
 // SearchReleases searches for releases (fallback when no master exists).
@@ -223,8 +265,12 @@ func (c *Client) SearchReleases(ctx context.Context, artist, title string) ([]Ve
 		return nil, fmt.Errorf("parsing search results: %w", err)
 	}
 
-	versions := make([]Version, 0, len(resp.Results))
-	for _, r := range resp.Results {
+	limit := len(resp.Results)
+	if limit > 10 {
+		limit = 10
+	}
+	versions := make([]Version, 0, limit)
+	for _, r := range resp.Results[:limit] {
 		label := ""
 		if len(r.Label) > 0 {
 			label = r.Label[0]
@@ -295,7 +341,16 @@ func (c *Client) GetVersions(ctx context.Context, masterID int) ([]Version, erro
 			})
 		}
 
-		if page >= resp.Pagination.Pages {
+		if len(all) > 500 && len(all) <= 500+len(resp.Versions) {
+			// Emit a warning once when we cross 500 — the caller (Claude) will
+			// see this in stderr and can mention it to the user.
+			fmt.Fprintf(os.Stderr, "warning: %d versions found for master %d; large sets may take longer to process\n", resp.Pagination.Items, masterID)
+		}
+		if page >= resp.Pagination.Pages || len(all) >= 1500 {
+			if len(all) >= 1500 {
+				all = all[:1500]
+				fmt.Fprintf(os.Stderr, "warning: version list truncated at 1500; master %d has %d total\n", masterID, resp.Pagination.Items)
+			}
 			break
 		}
 		page++
@@ -409,57 +464,114 @@ func (c *Client) AddToCollection(ctx context.Context, username string, folderID,
 	u := fmt.Sprintf("%s/users/%s/collection/folders/%d/releases/%d",
 		baseURL, url.PathEscape(username), folderID, releaseID)
 
-	backoff := 2 * time.Second
-	var lastErr error
-	for attempt := 0; attempt < 4; attempt++ {
-		if err := c.limiter.Wait(ctx); err != nil {
-			return nil, err
-		}
-
-		req, err := http.NewRequestWithContext(ctx, "POST", u, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Discogs token="+c.token)
-		req.Header.Set("User-Agent", userAgent)
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := c.http.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("POST %s: %w", u, err)
-		}
-
-		body, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if readErr != nil {
-			return nil, fmt.Errorf("reading response: %w", readErr)
-		}
-
-		if resp.StatusCode == 429 {
-			lastErr = &rateLimitError{}
-			if attempt == 3 {
-				break
-			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(backoff):
-			}
-			backoff *= 2
-			continue
-		}
-
-		if resp.StatusCode >= 400 {
-			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, extractMessage(body))
-		}
-
-		var instance CollectionInstance
-		if err := json.Unmarshal(body, &instance); err != nil {
-			return nil, fmt.Errorf("parsing response: %w", err)
-		}
-		return &instance, nil
+	body, err := c.doPost(ctx, u, nil)
+	if err != nil {
+		return nil, err
 	}
-	return nil, lastErr
+	var instance CollectionInstance
+	if err := json.Unmarshal(body, &instance); err != nil {
+		return nil, fmt.Errorf("parsing response: %w", err)
+	}
+	return &instance, nil
+}
+
+// GetCollectionFields returns the user's collection fields (Media Condition,
+// Sleeve Condition, Notes, and any custom fields).
+func (c *Client) GetCollectionFields(ctx context.Context, username string) ([]CollectionField, error) {
+	body, err := c.get(ctx, "/users/"+url.PathEscape(username)+"/collection/fields", nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Fields []CollectionField `json:"fields"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parsing collection fields: %w", err)
+	}
+	return resp.Fields, nil
+}
+
+// SetInstanceNote stores a text note on a collection instance. It resolves the
+// Notes field ID dynamically via the collection fields endpoint so it works
+// regardless of whether the user has customised their field ordering.
+func (c *Client) SetInstanceNote(ctx context.Context, username string, folderID, releaseID, instanceID int, note string) error {
+	fields, err := c.GetCollectionFields(ctx, username)
+	if err != nil {
+		return fmt.Errorf("resolving Notes field: %w", err)
+	}
+	fieldID := 0
+	for _, f := range fields {
+		if f.Type == "textarea" && f.Name == "Notes" {
+			fieldID = f.ID
+			break
+		}
+	}
+	if fieldID == 0 {
+		return fmt.Errorf("notes field not found in collection fields")
+	}
+
+	u := fmt.Sprintf("%s/users/%s/collection/folders/%d/releases/%d/instances/%d/fields/%d",
+		baseURL, url.PathEscape(username), folderID, releaseID, instanceID, fieldID)
+
+	payload, err := json.Marshal(map[string]string{"value": note})
+	if err != nil {
+		return err
+	}
+	_, err = c.doPost(ctx, u, payload)
+	return err
+}
+
+// FetchImageBase64 downloads an image and returns its base64-encoded data and
+// MIME type. Validates that the URL is a Discogs HTTPS URL before attaching
+// credentials; uses a dedicated client that enforces the same on any redirect.
+func (c *Client) FetchImageBase64(ctx context.Context, imageURL string) (string, string, error) {
+	parsed, err := url.Parse(imageURL)
+	if err != nil || parsed.Scheme != "https" || !strings.HasSuffix(parsed.Hostname(), ".discogs.com") {
+		return "", "", fmt.Errorf("refusing to fetch image from non-Discogs HTTPS URL: %s", imageURL)
+	}
+
+	if err := c.limiter.Wait(ctx); err != nil {
+		return "", "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", imageURL, nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("Authorization", "Discogs token="+c.token)
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.imageHTTP.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("fetching image: %w", err)
+	}
+	defer resp.Body.Close()
+
+	const maxImageBytes = 10 << 20 // 10 MB — well above any Discogs cover art
+	limited := io.LimitReader(resp.Body, maxImageBytes+1)
+
+	if resp.StatusCode >= 400 {
+		errBody, _ := io.ReadAll(limited)
+		return "", "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, extractMessage(errBody))
+	}
+
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return "", "", fmt.Errorf("reading image: %w", err)
+	}
+	if len(body) > maxImageBytes {
+		return "", "", fmt.Errorf("image exceeds %d MB limit", maxImageBytes>>20)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "image/jpeg"
+	}
+	if i := strings.Index(ct, ";"); i >= 0 {
+		ct = strings.TrimSpace(ct[:i])
+	}
+
+	return base64.StdEncoding.EncodeToString(body), ct, nil
 }
 
 func primaryFormat(majorFormats []string, formatStr string) string {

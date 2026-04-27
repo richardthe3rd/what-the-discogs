@@ -24,17 +24,27 @@ const (
 )
 
 type Client struct {
-	token   string
-	http    *http.Client
-	cache   map[string][]byte
-	cacheMu sync.RWMutex
-	limiter *rate.Limiter
+	token     string
+	http      *http.Client
+	imageHTTP *http.Client // for image fetches: enforces HTTPS and Discogs-only redirects
+	cache     map[string][]byte
+	cacheMu   sync.RWMutex
+	limiter   *rate.Limiter
 }
 
 func NewClient(token string) *Client {
 	return &Client{
 		token: token,
 		http:  &http.Client{Timeout: 30 * time.Second},
+		imageHTTP: &http.Client{
+			Timeout: 30 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if req.URL.Scheme != "https" || !strings.HasSuffix(req.URL.Hostname(), ".discogs.com") {
+					return fmt.Errorf("refusing redirect to non-Discogs HTTPS URL: %s", req.URL)
+				}
+				return nil
+			},
+		},
 		cache: make(map[string][]byte),
 		// 1 token/sec refill, burst of 3 — allows the first few calls in a
 		// session to fire immediately before throttling to 1/sec. Well within
@@ -113,6 +123,61 @@ func (c *Client) doGet(ctx context.Context, u string) ([]byte, error) {
 		return nil, fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, u, extractMessage(body))
 	}
 	return body, nil
+}
+
+// doPost executes a POST with rate-limiting and 429 backoff retry. payload may
+// be nil for bodyless POSTs. Returns the response body on success.
+func (c *Client) doPost(ctx context.Context, u string, payload []byte) ([]byte, error) {
+	backoff := 2 * time.Second
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
+		if err := c.limiter.Wait(ctx); err != nil {
+			return nil, err
+		}
+
+		var bodyReader io.Reader
+		if payload != nil {
+			bodyReader = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequestWithContext(ctx, "POST", u, bodyReader)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Discogs token="+c.token)
+		req.Header.Set("User-Agent", userAgent)
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("POST %s: %w", u, err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("reading response: %w", readErr)
+		}
+
+		if resp.StatusCode == 429 {
+			lastErr = &rateLimitError{}
+			if attempt == 3 {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, extractMessage(body))
+		}
+		return body, nil
+	}
+	return nil, lastErr
 }
 
 type rateLimitError struct{}
@@ -401,57 +466,15 @@ func (c *Client) AddToCollection(ctx context.Context, username string, folderID,
 	u := fmt.Sprintf("%s/users/%s/collection/folders/%d/releases/%d",
 		baseURL, url.PathEscape(username), folderID, releaseID)
 
-	backoff := 2 * time.Second
-	var lastErr error
-	for attempt := 0; attempt < 4; attempt++ {
-		if err := c.limiter.Wait(ctx); err != nil {
-			return nil, err
-		}
-
-		req, err := http.NewRequestWithContext(ctx, "POST", u, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Discogs token="+c.token)
-		req.Header.Set("User-Agent", userAgent)
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := c.http.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("POST %s: %w", u, err)
-		}
-
-		body, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if readErr != nil {
-			return nil, fmt.Errorf("reading response: %w", readErr)
-		}
-
-		if resp.StatusCode == 429 {
-			lastErr = &rateLimitError{}
-			if attempt == 3 {
-				break
-			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(backoff):
-			}
-			backoff *= 2
-			continue
-		}
-
-		if resp.StatusCode >= 400 {
-			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, extractMessage(body))
-		}
-
-		var instance CollectionInstance
-		if err := json.Unmarshal(body, &instance); err != nil {
-			return nil, fmt.Errorf("parsing response: %w", err)
-		}
-		return &instance, nil
+	body, err := c.doPost(ctx, u, nil)
+	if err != nil {
+		return nil, err
 	}
-	return nil, lastErr
+	var instance CollectionInstance
+	if err := json.Unmarshal(body, &instance); err != nil {
+		return nil, fmt.Errorf("parsing response: %w", err)
+	}
+	return &instance, nil
 }
 
 // GetCollectionFields returns the user's collection fields (Media Condition,
@@ -496,65 +519,21 @@ func (c *Client) SetInstanceNote(ctx context.Context, username string, folderID,
 	if err != nil {
 		return err
 	}
-
-	backoff := 2 * time.Second
-	var lastErr error
-	for attempt := 0; attempt < 4; attempt++ {
-		if err := c.limiter.Wait(ctx); err != nil {
-			return err
-		}
-
-		req, err := http.NewRequestWithContext(ctx, "POST", u, bytes.NewReader(payload))
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Authorization", "Discogs token="+c.token)
-		req.Header.Set("User-Agent", userAgent)
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := c.http.Do(req)
-		if err != nil {
-			return fmt.Errorf("POST %s: %w", u, err)
-		}
-
-		body, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if readErr != nil {
-			return fmt.Errorf("reading response: %w", readErr)
-		}
-
-		if resp.StatusCode == 429 {
-			lastErr = &rateLimitError{}
-			if attempt == 3 {
-				break
-			}
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(backoff):
-			}
-			backoff *= 2
-			continue
-		}
-
-		if resp.StatusCode >= 400 {
-			return fmt.Errorf("HTTP %d: %s", resp.StatusCode, extractMessage(body))
-		}
-		return nil
-	}
-	return lastErr
+	_, err = c.doPost(ctx, u, payload)
+	return err
 }
 
 // FetchImageBase64 downloads an image and returns its base64-encoded data and
-// MIME type. Discogs CDN images require the same auth token as API calls.
+// MIME type. Validates that the URL is a Discogs HTTPS URL before attaching
+// credentials; uses a dedicated client that enforces the same on any redirect.
 func (c *Client) FetchImageBase64(ctx context.Context, imageURL string) (string, string, error) {
-	if err := c.limiter.Wait(ctx); err != nil {
-		return "", "", err
+	parsed, err := url.Parse(imageURL)
+	if err != nil || parsed.Scheme != "https" || !strings.HasSuffix(parsed.Hostname(), ".discogs.com") {
+		return "", "", fmt.Errorf("refusing to fetch image from non-Discogs HTTPS URL: %s", imageURL)
 	}
 
-	parsed, err := url.Parse(imageURL)
-	if err != nil || !strings.HasSuffix(parsed.Hostname(), ".discogs.com") {
-		return "", "", fmt.Errorf("refusing to fetch image from non-Discogs host: %s", imageURL)
+	if err := c.limiter.Wait(ctx); err != nil {
+		return "", "", err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", imageURL, nil)
@@ -564,7 +543,7 @@ func (c *Client) FetchImageBase64(ctx context.Context, imageURL string) (string,
 	req.Header.Set("Authorization", "Discogs token="+c.token)
 	req.Header.Set("User-Agent", userAgent)
 
-	resp, err := c.http.Do(req)
+	resp, err := c.imageHTTP.Do(req)
 	if err != nil {
 		return "", "", fmt.Errorf("fetching image: %w", err)
 	}

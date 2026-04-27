@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 )
 
 var version = "dev"
@@ -31,6 +32,8 @@ func main() {
 		cmdSearchMaster(ctx, client)
 	case "search-release":
 		cmdSearchRelease(ctx, client)
+	case "search-matrix":
+		cmdSearchMatrix(ctx, client)
 	case "versions":
 		cmdVersions(ctx, client)
 	case "release":
@@ -81,9 +84,23 @@ func cmdSearchRelease(ctx context.Context, c *Client) {
 	writeJSON(results)
 }
 
+func cmdSearchMatrix(ctx context.Context, c *Client) {
+	fs := flag.NewFlagSet("search-matrix", flag.ExitOnError)
+	query := fs.String("query", "", "Matrix/runout etching string to search for")
+	fs.Parse(os.Args[2:])
+	requireFlag("search-matrix", "query", *query)
+
+	results, err := c.SearchByMatrix(ctx, *query)
+	dieOnErr(err)
+	writeJSON(results)
+}
+
 func cmdVersions(ctx context.Context, c *Client) {
 	fs := flag.NewFlagSet("versions", flag.ExitOnError)
 	masterID := fs.Int("master", 0, "Master release ID")
+	country := fs.String("country", "", "Filter by country (e.g. US, UK)")
+	year := fs.String("year", "", "Filter by year (e.g. 1969)")
+	format := fs.String("format", "", "Filter by format (e.g. Vinyl, LP)")
 	fs.Parse(os.Args[2:])
 	if *masterID == 0 {
 		fmt.Fprintln(os.Stderr, "error: --master is required")
@@ -92,6 +109,9 @@ func cmdVersions(ctx context.Context, c *Client) {
 
 	versions, err := c.GetVersions(ctx, *masterID)
 	dieOnErr(err)
+	if *country != "" || *year != "" || *format != "" {
+		versions = filterVersions(versions, *country, *year, *format)
+	}
 	writeJSON(versions)
 }
 
@@ -168,6 +188,23 @@ func cmdAddToCollection(ctx context.Context, c *Client) {
 	writeJSON(result{instance, *notes})
 }
 
+func filterVersions(versions []Version, country, year, format string) []Version {
+	filtered := versions[:0:0]
+	for _, v := range versions {
+		if country != "" && !strings.EqualFold(v.Country, country) {
+			continue
+		}
+		if year != "" && v.Year != year {
+			continue
+		}
+		if format != "" && !strings.EqualFold(v.Format, format) {
+			continue
+		}
+		filtered = append(filtered, v)
+	}
+	return filtered
+}
+
 func requireFlag(cmd, name, val string) {
 	if val == "" {
 		fmt.Fprintf(os.Stderr, "error: --%s is required for %s\n", name, cmd)
@@ -199,7 +236,8 @@ Usage: wtd <subcommand> [flags]
 Subcommands:
   search-master   --artist STR --album STR
   search-release  --artist STR --album STR
-  versions        --master INT
+  search-matrix   --query STR
+  versions        --master INT [--country STR] [--year STR] [--format STR]
   release         --id INT
   identity
   list-folders    [--username STR]

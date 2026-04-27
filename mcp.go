@@ -19,6 +19,7 @@ func runMCP(c *Client) error {
 
 	s.AddTool(toolSearchMasters(), handleSearchMasters(c))
 	s.AddTool(toolSearchReleases(), handleSearchReleases(c))
+	s.AddTool(toolSearchByMatrix(), handleSearchByMatrix(c))
 	s.AddTool(toolGetVersions(), handleGetVersions(c))
 	s.AddTool(toolGetRelease(), handleGetRelease(c))
 	s.AddTool(toolGetIdentity(), handleGetIdentity(c))
@@ -46,10 +47,20 @@ func toolSearchReleases() mcp.Tool {
 	)
 }
 
+func toolSearchByMatrix() mcp.Tool {
+	return mcp.NewTool("search_by_matrix",
+		mcp.WithDescription("Search Discogs for releases by matrix/runout etching string. Use when the user can read matrix markings from the dead wax — this can identify the exact pressing in one step without iterating through get_release calls."),
+		mcp.WithString("query", mcp.Required(), mcp.Description("Matrix or runout etching string, e.g. \"XARL-7503\" or \"YEX 749\"")),
+	)
+}
+
 func toolGetVersions() mcp.Tool {
 	return mcp.NewTool("get_versions",
-		mcp.WithDescription("Get all known pressings and versions of a master release. Returns country, year, label, catalogue number, and format for each. Use this to understand what variants exist before asking the user questions."),
+		mcp.WithDescription("Get all known pressings and versions of a master release. Returns country, year, label, catalogue number, and format for each. Pass country/year/format to pre-filter results and reduce the candidate set immediately."),
 		mcp.WithNumber("master_id", mcp.Required(), mcp.Description("Master release ID from search_masters")),
+		mcp.WithString("country", mcp.Description("Filter to a specific country, e.g. \"US\" or \"UK\"")),
+		mcp.WithString("year", mcp.Description("Filter to a specific release year, e.g. \"1969\"")),
+		mcp.WithString("format", mcp.Description("Filter to a specific format, e.g. \"Vinyl\" or \"LP\"")),
 	)
 }
 
@@ -116,6 +127,24 @@ func handleSearchReleases(c *Client) server.ToolHandlerFunc {
 	}
 }
 
+func handleSearchByMatrix(c *Client) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgs(req)
+		query, _ := args["query"].(string)
+		if query == "" {
+			return toolErr("query is required"), nil
+		}
+		results, err := c.SearchByMatrix(ctx, query)
+		if err != nil {
+			return toolErr("search failed: %v", err), nil
+		}
+		if len(results) == 0 {
+			return mcp.NewToolResultText("No releases found matching that matrix string."), nil
+		}
+		return toolJSON(results), nil
+	}
+}
+
 func handleGetVersions(c *Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		masterID := int(numArg(req, "master_id"))
@@ -123,9 +152,17 @@ func handleGetVersions(c *Client) server.ToolHandlerFunc {
 			return toolErr("master_id is required and must be non-zero"), nil
 		}
 
+		args := getArgs(req)
+		filterCountry, _ := args["country"].(string)
+		filterYear, _ := args["year"].(string)
+		filterFormat, _ := args["format"].(string)
+
 		versions, err := c.GetVersions(ctx, masterID)
 		if err != nil {
 			return toolErr("fetching versions: %v", err), nil
+		}
+		if filterCountry != "" || filterYear != "" || filterFormat != "" {
+			versions = filterVersions(versions, filterCountry, filterYear, filterFormat)
 		}
 		return toolJSON(versions), nil
 	}

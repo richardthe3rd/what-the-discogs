@@ -43,8 +43,11 @@ If the user passed an image path as `$ARGUMENTS`:
 Otherwise, ask the user:
 - What artist and album are they looking for?
 - Anything else they already know (year, country, label, catalogue number)?
+- Can they read any text etched into the dead wax (the shiny area between the last groove and the label)? These are matrix markings — strings like `XARL-7503` or `YEX 749-1`.
 
 Keep these as hints — you'll use them to skip questions later.
+
+**If matrix etchings are available at this stage**, jump straight to Phase 2b.
 
 ## Phase 2: Find master release
 
@@ -58,15 +61,32 @@ wtd search-master --artist "ARTIST" --album "ALBUM"
 
 If using release search results (no master): skip Phase 3 and go directly to Phase 5 with those releases as candidates.
 
+## Phase 2b: Matrix search shortcut (skip to here if matrix etchings known)
+
+If the user already knows matrix etchings from Phase 1, search directly:
+
+```bash
+wtd search-matrix --query "MATRIX_STRING"
+```
+
+For example: `wtd search-matrix --query "XARL-7503"` or `wtd search-matrix --query "YEX 749"`.
+
+- **Matches found**: confirm with the user which looks right (title, country, year, label), then jump to Phase 6.
+- **No matches**: fall back to the standard Phase 2 → Phase 5 flow.
+
 ## Phase 3: Load all versions
 
 ```bash
-wtd versions --master MASTER_ID
+wtd versions --master MASTER_ID [--country COUNTRY] [--year YEAR] [--format FORMAT]
+```
+
+Apply any pre-known hints from Phase 1 immediately as CLI flags — if the user already told you the country and year, pass them directly:
+
+```bash
+wtd versions --master MASTER_ID --country "US" --year "1969"
 ```
 
 Show the user: "Found N versions. Let me narrow these down."
-
-Apply any pre-known hints from Phase 1 immediately — if the user already told you the country, filter to just those versions now.
 
 ## Phase 4: Structured narrowing
 

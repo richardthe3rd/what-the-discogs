@@ -237,6 +237,60 @@ func (c *Client) SearchMasters(ctx context.Context, artist, title string) ([]Mas
 	return results, nil
 }
 
+// SearchByMatrix searches for releases by matrix/runout etching string.
+func (c *Client) SearchByMatrix(ctx context.Context, query string) ([]Version, error) {
+	params := url.Values{
+		"q":    {query},
+		"type": {"release"},
+	}
+	body, err := c.get(ctx, "/database/search", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Results []struct {
+			ID      int      `json:"id"`
+			Title   string   `json:"title"`
+			Label   []string `json:"label"`
+			Country string   `json:"country"`
+			Year    string   `json:"year"`
+			CatNo   string   `json:"catno"`
+			Format  []string `json:"format"`
+			Thumb   string   `json:"thumb"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parsing search results: %w", err)
+	}
+
+	limit := len(resp.Results)
+	if limit > 10 {
+		limit = 10
+	}
+	versions := make([]Version, 0, limit)
+	for _, r := range resp.Results[:limit] {
+		label := ""
+		if len(r.Label) > 0 {
+			label = r.Label[0]
+		}
+		format, descs := splitFormat(r.Format)
+		versions = append(versions, Version{
+			ID:          r.ID,
+			Title:       r.Title,
+			Label:       label,
+			Country:     r.Country,
+			Year:        r.Year,
+			CatNo:       r.CatNo,
+			Format:      format,
+			FormatDescs: descs,
+			Thumb:       r.Thumb,
+			ResourceURL: fmt.Sprintf("https://api.discogs.com/releases/%d", r.ID),
+		})
+	}
+	return versions, nil
+}
+
 // SearchReleases searches for releases (fallback when no master exists).
 func (c *Client) SearchReleases(ctx context.Context, artist, title string) ([]Version, error) {
 	params := url.Values{

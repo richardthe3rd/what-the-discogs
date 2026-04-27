@@ -37,6 +37,12 @@
       }
     }
   },
+  "prompts": [
+    {
+      "name": "identify_vinyl",
+      "description": "Identify the exact Discogs pressing of a vinyl record via guided Q&A. Optionally pass a hint (artist, album, matrix etchings, etc.) to skip known questions."
+    }
+  ],
   "tools": [
     {
       "name": "search_masters",
@@ -47,8 +53,12 @@
       "description": "Search Discogs for individual releases. Use as a fallback when search_masters returns no results."
     },
     {
+      "name": "search_by_matrix",
+      "description": "Search Discogs for releases by matrix/runout etching string. Use when the user can read matrix markings from the dead wax — this can identify the exact pressing in one step."
+    },
+    {
       "name": "get_versions",
-      "description": "Get all known pressings and versions of a master release. Returns country, year, label, catalogue number, and format for each."
+      "description": "Get all known pressings and versions of a master release. Returns country, year, label, catalogue number, and format for each. Accepts optional country/year/format filters."
     },
     {
       "name": "get_release",

@@ -44,6 +44,18 @@ chmod +x \
 sed -i.bak "s/\"0\.0\.0\"/\"${VERSION}\"/" "$BUNDLE_STAGE/manifest.json"
 rm -f "$BUNDLE_STAGE/manifest.json.bak"
 
+# Inject the identify_vinyl prompt text from the source file into manifest.json.
+# jq handles all JSON encoding so newlines and special chars are safe.
+PROMPT_TEXT_FILE="$ROOT_DIR/prompt_identify_vinyl.txt"
+if command -v jq &>/dev/null; then
+  jq --rawfile prompt_text "$PROMPT_TEXT_FILE" \
+    '(.prompts[] | select(.name == "identify_vinyl")).text = $prompt_text' \
+    "$BUNDLE_STAGE/manifest.json" > "$BUNDLE_STAGE/manifest.json.tmp"
+  mv "$BUNDLE_STAGE/manifest.json.tmp" "$BUNDLE_STAGE/manifest.json"
+else
+  echo "WARNING: jq not found; prompt text not injected into manifest" >&2
+fi
+
 # Pack the bundle
 echo "Packing bundle..."
 npx --yes @anthropic-ai/mcpb pack "$BUNDLE_STAGE" "$OUTPUT"

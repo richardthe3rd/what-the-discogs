@@ -40,7 +40,8 @@
   "prompts": [
     {
       "name": "identify_vinyl",
-      "description": "Identify the exact Discogs pressing of a vinyl record via guided Q&A. Optionally pass a hint (artist, album, matrix etchings, etc.) to skip known questions."
+      "description": "Identify the exact Discogs pressing of a vinyl record via guided Q&A. Optionally pass a hint (artist, album, matrix etchings, etc.) to skip known questions.",
+      "text": "__PROMPT_TEXT__"
     }
   ],
   "tools": [

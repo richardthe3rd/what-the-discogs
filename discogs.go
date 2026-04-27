@@ -145,9 +145,7 @@ func (c *Client) doPost(ctx context.Context, u string, payload []byte) ([]byte, 
 		}
 		req.Header.Set("Authorization", "Discogs token="+c.token)
 		req.Header.Set("User-Agent", userAgent)
-		if payload != nil {
-			req.Header.Set("Content-Type", "application/json")
-		}
+		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := c.http.Do(req)
 		if err != nil {

@@ -33,7 +33,11 @@ All subcommands output JSON to stdout. Errors go to stderr with non-zero exit.
 ```
 wtd search-master  --artist STR --album STR      → []MasterResult
 wtd search-release --artist STR --album STR      → []Version
-wtd versions       --master INT                  → []Version
+wtd search-matrix  --query STR                   → []Version
+wtd versions       --master INT \
+       [--country STR] \
+       [--year STR] \
+       [--format STR]                            → []Version
 wtd release        --id INT                      → ReleaseDetail
 wtd identity                                     → Identity
 wtd list-folders   [--username STR]              → []Folder
